@@ -4,3 +4,6 @@ networkx
 matplotlib
 scipy
 google-generativeai
+google-genai
+cryptography
+requests
