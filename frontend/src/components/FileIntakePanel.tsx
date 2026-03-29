@@ -7,7 +7,6 @@ export interface FileInfo {
   name: string;
   sizeKb: number;
   ext: string;
-  threatLevel: number;
   file?: File;
 }
 
@@ -25,8 +24,7 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
   function processFile(f: File) {
     const ext = f.name.split('.').pop()?.toUpperCase() ?? 'UNK';
     const sizeKb = Math.round(f.size / 1024) || 1;
-    const threatLevel = Math.floor(Math.random() * 6) + 4;
-    onFileLoaded({ name: f.name, sizeKb, ext, threatLevel, file: f });
+    onFileLoaded({ name: f.name, sizeKb, ext, file: f });
   }
 
   function handleDrop(ev: React.DragEvent) {
@@ -42,12 +40,7 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
   }
 
   function loadDemo() {
-    onFileLoaded({
-      name: 'invoice_q4.exe',
-      sizeKb: 278,
-      ext: 'EXE',
-      threatLevel: 7,
-    });
+    onFileLoaded({ name: 'invoice_q4.exe', sizeKb: 278, ext: 'EXE' });
   }
 
   return (
@@ -88,14 +81,6 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
               <div className="mini-stat-val">{fileInfo.ext}</div>
               <div className="mini-stat-lbl">TYPE</div>
             </div>
-          </div>
-          <div className="section-divider" />
-          <div className="f9 text-dim">THREAT LEVEL PRE-SCAN</div>
-          <div className="threat-level-display" style={{ marginTop: 6 }}>
-            {Array.from({ length: 10 }, (_, i) => (
-              <div key={i} className={`threat-bar ${i < fileInfo.threatLevel ? 'filled' : ''}`} />
-            ))}
-            <span className="threat-label">{fileInfo.threatLevel * 10}%</span>
           </div>
         </>
       )}
