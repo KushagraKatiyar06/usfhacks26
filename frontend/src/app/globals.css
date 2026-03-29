@@ -206,6 +206,15 @@ body::before {
   text-transform: uppercase;
 }
 
+.landing-upload-shell {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(12, 22, 40, 0.86);
+  border-radius: 20px;
+  padding: 24px;
+  box-shadow: 0 24px 80px rgba(3, 8, 20, 0.5);
+  backdrop-filter: blur(18px);
+}
+
 .threat-level-display {
   display: flex;
   gap: 3px;

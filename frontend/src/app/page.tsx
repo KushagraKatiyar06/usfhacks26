@@ -1,24 +1,26 @@
 'use client';
 
-import Link from 'next/link';
-import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
+import FileIntakePanel, { type FileInfo } from '@/components/FileIntakePanel';
+import { setPendingFileInfo } from '@/lib/analysisSession';
 
 const FloatingLines = dynamic(() => import('@/components/FloatingLines'), { ssr: false });
 
 export default function Home() {
-  const [clock, setClock] = useState('');
+  const router = useRouter();
+  const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
 
-  useEffect(() => {
-    const update = () => setClock(new Date().toUTCString().slice(17, 25) + ' UTC');
-    update();
-    const id = setInterval(update, 1000);
-    return () => clearInterval(id);
-  }, []);
+  function handleAnalyze() {
+    if (!fileInfo) return;
+    setPendingFileInfo(fileInfo);
+    router.push('/dashboard');
+  }
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-      {/* FloatingLines background */}
       <div style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none', opacity: 0.35 }}>
         <FloatingLines
           enabledWaves={['top', 'middle', 'bottom']}
@@ -32,9 +34,8 @@ export default function Home() {
           mixBlendMode="screen"
         />
       </div>
-      {/* Dark overlay to keep text readable */}
       <div style={{ position: 'fixed', inset: 0, zIndex: 1, pointerEvents: 'none', background: 'rgba(6,12,26,0.55)' }} />
-      {/* Nav */}
+
       <nav style={{
         display: 'flex',
         justifyContent: 'space-between',
@@ -55,10 +56,9 @@ export default function Home() {
           color: '#e2e8f0',
           textTransform: 'uppercase',
         }}>
-          Use<span style={{ color: '#3b82f6' }}>Protection</span>
+          use<span style={{ color: '#3b82f6' }}>protechtion</span>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '11px', color: '#475569' }}>{clock}</span>
           <Link href="/dashboard" style={{
             fontFamily: 'Orbitron, monospace',
             fontSize: '9px',
@@ -71,12 +71,11 @@ export default function Home() {
             textDecoration: 'none',
             transition: 'all 0.2s',
           }}>
-            Sign In
+            Dashboard
           </Link>
         </div>
       </nav>
 
-      {/* Hero */}
       <main style={{
         flex: 1,
         display: 'flex',
@@ -84,11 +83,10 @@ export default function Home() {
         alignItems: 'center',
         justifyContent: 'center',
         textAlign: 'center',
-        padding: '80px 24px',
+        padding: '72px 24px 56px',
         position: 'relative',
         zIndex: 200,
       }}>
-        {/* Glow orbs */}
         <div style={{
           position: 'absolute',
           top: '20%',
@@ -118,23 +116,6 @@ export default function Home() {
           pointerEvents: 'none',
         }} />
 
-        {/* Badge */}
-        <div style={{
-          fontFamily: 'JetBrains Mono, monospace',
-          fontSize: '10px',
-          letterSpacing: '3px',
-          textTransform: 'uppercase',
-          color: '#3b82f6',
-          border: '1px solid rgba(59,130,246,0.3)',
-          borderRadius: '20px',
-          padding: '6px 18px',
-          marginBottom: '40px',
-          background: 'rgba(59,130,246,0.06)',
-        }}>
-          AI-Powered Malware Analysis
-        </div>
-
-        {/* Title */}
         <h1 style={{
           fontFamily: 'Orbitron, monospace',
           fontWeight: 900,
@@ -142,95 +123,48 @@ export default function Home() {
           letterSpacing: '4px',
           textTransform: 'uppercase',
           lineHeight: 1.1,
-          marginBottom: '28px',
+          marginBottom: '20px',
           color: '#ffffff',
         }}>
-          Use<span style={{
+          use<span style={{
             color: '#3b82f6',
             textShadow: '0 0 40px rgba(59,130,246,0.5)',
-          }}>Protection</span>
+          }}>protechtion</span>
         </h1>
 
-        {/* Subtitle */}
         <p style={{
           fontSize: '16px',
           color: '#94a3b8',
-          maxWidth: '520px',
+          maxWidth: '560px',
           lineHeight: 1.8,
-          marginBottom: '52px',
+          marginBottom: '20px',
           fontWeight: 400,
         }}>
-          Detonate suspicious files in an isolated sandbox. Get instant MITRE ATT&CK mapping, behavioral analysis, and AI-generated threat reports.
+          Detonate suspicious files in an isolated sandbox. Upload a specimen below to jump straight into analysis.
         </p>
 
-        {/* CTA */}
-        <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', justifyContent: 'center' }}>
-          <Link href="/dashboard" style={{
-            fontFamily: 'Orbitron, monospace',
-            fontSize: '10px',
-            letterSpacing: '2px',
-            textTransform: 'uppercase',
-            color: '#ffffff',
-            background: '#3b82f6',
-            border: '1px solid #3b82f6',
-            borderRadius: '8px',
-            padding: '14px 32px',
-            textDecoration: 'none',
-            boxShadow: '0 0 24px rgba(59,130,246,0.35)',
-          }}>
-            Get Started
-          </Link>
-          <Link href="/dashboard" style={{
-            fontFamily: 'Orbitron, monospace',
-            fontSize: '10px',
-            letterSpacing: '2px',
-            textTransform: 'uppercase',
-            color: '#94a3b8',
-            background: 'transparent',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: '8px',
-            padding: '14px 32px',
-            textDecoration: 'none',
-          }}>
-            View Demo
-          </Link>
+        <div style={{
+          fontFamily: 'JetBrains Mono, monospace',
+          fontSize: '10px',
+          letterSpacing: '3px',
+          textTransform: 'uppercase',
+          color: '#3b82f6',
+          marginBottom: '18px',
+        }}>
+          Specimen Intake
         </div>
 
-        {/* Stats row */}
-        <div style={{
-          display: 'flex',
-          gap: '48px',
-          marginTop: '80px',
-          flexWrap: 'wrap',
-          justifyContent: 'center',
-        }}>
-          {[
-            { val: '99.7%', label: 'Detection Rate' },
-            { val: '<30s', label: 'Analysis Time' },
-            { val: '200+', label: 'MITRE Techniques' },
-          ].map(({ val, label }) => (
-            <div key={label} style={{ textAlign: 'center' }}>
-              <div style={{
-                fontFamily: 'Orbitron, monospace',
-                fontSize: '28px',
-                fontWeight: 700,
-                color: '#ffffff',
-                textShadow: '0 0 20px rgba(59,130,246,0.4)',
-              }}>{val}</div>
-              <div style={{
-                fontFamily: 'JetBrains Mono, monospace',
-                fontSize: '10px',
-                letterSpacing: '2px',
-                textTransform: 'uppercase',
-                color: '#475569',
-                marginTop: '6px',
-              }}>{label}</div>
-            </div>
-          ))}
+        <div style={{ width: 'min(100%, 540px)' }}>
+          <FileIntakePanel
+            variant="landing"
+            fileInfo={fileInfo}
+            onFileLoaded={setFileInfo}
+            onAnalyze={handleAnalyze}
+            analysisRunning={false}
+          />
         </div>
       </main>
 
-      {/* Footer */}
       <footer style={{
         padding: '20px 48px',
         borderTop: '1px solid rgba(255,255,255,0.07)',
@@ -241,10 +175,10 @@ export default function Home() {
         zIndex: 200,
       }}>
         <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '10px', color: '#475569', letterSpacing: '1px' }}>
-          © 2026 USEPROTECTION
+          2026 USEPROTECHTION
         </span>
         <div style={{ display: 'flex', gap: '4px' }}>
-          {['#10b981','#3b82f6','#8b5cf6','#f43f5e'].map((c, i) => (
+          {['#10b981', '#3b82f6', '#8b5cf6', '#f43f5e'].map((c, i) => (
             <div key={i} style={{ width: '6px', height: '6px', borderRadius: '50%', background: c, boxShadow: `0 0 6px ${c}` }} />
           ))}
         </div>
