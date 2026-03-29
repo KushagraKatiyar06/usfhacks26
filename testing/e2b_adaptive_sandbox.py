@@ -1006,53 +1006,87 @@ def hybrid_analysis_enrich(filename: str, G: nx.DiGraph):
     # --- Step 1: search for an existing Windows report by hash ---
     print(f"\n[HA] Searching for existing report (SHA256: {sha256[:16]}...)")
     job_id = None
+
+    def _parse_search_results(raw):
+        """Extract job_id from any HA search/overview response shape."""
+        nonlocal job_id
+        results = raw.get("result", raw) if isinstance(raw, dict) else raw
+        # /overview returns a single dict with a "submissions" list
+        if isinstance(raw, dict) and "submissions" in raw:
+            subs = raw["submissions"]
+            if isinstance(subs, list) and subs:
+                job_id = _extract_job_id(subs[0]) or sha256
+                print(f"[HA] Found via overview, using: {job_id}")
+                return
+        if isinstance(results, list) and results:
+            for env_pref in (160, 120, 110):
+                for res in results:
+                    if res.get("environment_id") == env_pref:
+                        job_id = _extract_job_id(res)
+                        print(f"[HA] Found existing report (env {env_pref}): {job_id}")
+                        return
+            job_id = _extract_job_id(results[0])
+            print(f"[HA] Using first available report: {job_id}")
+
+    # Try 1: POST /search/hash with JSON body (HA v2 accepts both form + JSON)
     try:
-        r = requests.post(f"{BASE}/search/hash", headers=hdrs,
-                          data={"hash": sha256}, timeout=30)
-        if not r.ok:
-            print(f"[HA] Search HTTP {r.status_code}: {r.text[:200]}")
+        r = requests.post(
+            f"{BASE}/search/hash",
+            headers={**hdrs, "Content-Type": "application/json"},
+            json={"hash": sha256},
+            timeout=30,
+        )
+        print(f"[HA] Search (JSON) HTTP {r.status_code}")
+        if r.ok:
+            _parse_search_results(r.json())
         else:
-            raw = r.json()
-            # API v2 returns {"count":N,"result":[...]} or a plain list
-            results = raw.get("result", raw) if isinstance(raw, dict) else raw
-            if isinstance(results, list) and results:
-                for env_pref in (160, 120, 110):
-                    for res in results:
-                        if res.get("environment_id") == env_pref:
-                            job_id = _extract_job_id(res)
-                            print(f"[HA] Found existing report (env {env_pref}): {job_id}")
-                            break
-                    if job_id:
-                        break
-                if not job_id:
-                    job_id = _extract_job_id(results[0])
-                    print(f"[HA] Using first available report: {job_id}")
-            else:
-                print(f"[HA] No prior report in HA. Raw: {str(raw)[:200]}")
+            print(f"[HA] Search JSON body failed: {r.text[:200]}")
     except Exception as e:
-        print(f"[HA] Hash search error: {e}")
+        print(f"[HA] Search JSON error: {e}")
+
+    # Try 2: GET /overview/{sha256} — direct hash lookup, no search needed
+    if not job_id:
+        try:
+            r = requests.get(f"{BASE}/overview/{sha256}", headers=hdrs, timeout=30)
+            print(f"[HA] Overview HTTP {r.status_code}")
+            if r.ok:
+                _parse_search_results(r.json())
+                # NOTE: if overview exists but no sandbox submission found, job_id
+                # stays None — we must still submit to get real behavior data.
+                if not job_id:
+                    print(f"[HA] Hash known to HA but no sandbox report — will submit.")
+            else:
+                print(f"[HA] Overview: {r.text[:200]}")
+        except Exception as e:
+            print(f"[HA] Overview error: {e}")
 
     # --- Step 2: submit if no existing report found ---
     if not job_id:
-        print("[HA] Submitting to Windows 10 sandbox (env 160)...")
-        try:
-            with open(full_path, "rb") as fh:
-                r = requests.post(
-                    f"{BASE}/submit/file",
-                    headers=hdrs,
-                    files={"file": (filename, fh, "application/octet-stream")},
-                    data={"environment_id": 160, "allow_community_access": True},
-                    timeout=60,
-                )
-            if not r.ok:
-                print(f"[HA] Submit HTTP {r.status_code}: {r.text[:300]}")
-                return
-            sub = r.json()
-            print(f"[HA] Submit response keys: {list(sub.keys())}")
-            job_id = _extract_job_id(sub)
-            print(f"[HA] Submitted. Job ID: {job_id}")
-        except Exception as e:
-            print(f"[HA] Submission failed: {e}")
+        # NOTE: do NOT set Content-Type manually when using files= — requests sets
+        # multipart/form-data with boundary automatically.
+        submit_hdrs = {"api-key": api_key, "User-Agent": "Falcon Sandbox", "Accept": "application/json"}
+        submitted = False
+        for submit_url in [f"{BASE}/submit/file", f"{BASE}/submissions"]:
+            print(f"[HA] Submitting to Windows 10 sandbox (env 160) → {submit_url}")
+            try:
+                with open(full_path, "rb") as fh:
+                    r = requests.post(
+                        submit_url,
+                        headers=submit_hdrs,
+                        files={"file": (filename, fh, "application/octet-stream")},
+                        data={"environment_id": "160"},
+                        timeout=60,
+                    )
+                print(f"[HA] Submit HTTP {r.status_code}: {r.text[:400]}")
+                if r.ok:
+                    sub = r.json()
+                    job_id = _extract_job_id(sub)
+                    print(f"[HA] Submitted. Job ID: {job_id}")
+                    submitted = True
+                    break
+            except Exception as e:
+                print(f"[HA] Submission error ({submit_url}): {e}")
+        if not submitted:
             return
 
     if not job_id:
@@ -1097,42 +1131,63 @@ def hybrid_analysis_enrich(filename: str, G: nx.DiGraph):
             G.add_edge(root_node, node_key, action=f"HA:{edge}")
             added += 1
 
-    # Network
-    for net in report.get("network_list", []) or []:
-        url = net.get("url") or net.get("host") or ""
-        method = (net.get("request_method") or "CONNECT").upper()
+    # Dump top-level keys so we can see the actual schema on first run
+    print(f"[HA] Report top-level keys: {list(report.keys())[:30]}")
+
+    # HA summary uses several naming conventions — cover all of them.
+
+    # Network requests  (key: "network_list" | "requests" | "http_requests")
+    for net in (report.get("network_list") or report.get("requests") or
+                report.get("http_requests") or []):
+        if not isinstance(net, dict): continue
+        url = net.get("url") or net.get("request") or net.get("host") or ""
+        method = (net.get("request_method") or net.get("method") or "CONNECT").upper()
         if url:
             _ha_node("NETWORK", "#FF6B6B", f"{method} {url}", "HTTP_REQUEST")
 
-    # DNS / hosts
-    for host in report.get("hosts", []) or []:
-        _ha_node("NETWORK", "#FF6B6B", f"DNS {host}", "DNS_LOOKUP")
+    # DNS / contacted hosts  (key: "hosts" | "domains" | "compromised_hosts")
+    for item in (report.get("hosts") or report.get("domains") or
+                 report.get("compromised_hosts") or []):
+        if isinstance(item, dict):
+            host = item.get("ip") or item.get("host") or item.get("domain") or ""
+        else:
+            host = str(item)
+        if host:
+            _ha_node("NETWORK", "#FF6B6B", f"DNS/IP {host}", "DNS_LOOKUP")
 
-    # Registry
-    for reg in report.get("registry", []) or []:
-        key = reg.get("key") or reg.get("registry_key") or ""
-        op  = (reg.get("operation") or "ACCESS").upper()
+    # Registry  (key: "registry" | "registry_list")
+    for reg in (report.get("registry") or report.get("registry_list") or []):
+        if not isinstance(reg, dict): continue
+        key = reg.get("key") or reg.get("registry_key") or reg.get("value_name") or ""
+        op  = (reg.get("operation") or reg.get("status") or "ACCESS").upper()
         if key:
             _ha_node("REGISTRY", "#DA70D6", f"{op}: {key}", "REG_ACCESS")
 
-    # Processes
-    for proc in report.get("process_list", []) or []:
-        label = proc.get("cmd") or proc.get("command_line") or proc.get("name") or ""
+    # Processes  (key: "process_list" | "processes")
+    for proc in (report.get("process_list") or report.get("processes") or []):
+        if not isinstance(proc, dict): continue
+        label = (proc.get("cmd") or proc.get("command_line") or
+                 proc.get("commandline") or proc.get("name") or "")
         if label:
             _ha_node("EXEC", "#FF4500", label, "PROCESS_SPAWN")
 
-    # File operations
-    for fop in report.get("file_details", []) or []:
-        path = fop.get("file_path") or fop.get("filename") or ""
-        op   = (fop.get("operation") or "FILE_OP").upper()
+    # File operations  (key: "file_details" | "files" | "file_activity")
+    for fop in (report.get("file_details") or report.get("files") or
+                report.get("file_activity") or []):
+        if not isinstance(fop, dict): continue
+        path = (fop.get("file_path") or fop.get("filename") or
+                fop.get("path") or fop.get("name") or "")
+        op   = (fop.get("operation") or fop.get("type") or "FILE_OP").upper()
         if path:
             _ha_node("FILE", "#00BFFF", f"{op}: {path}", "FILE_OP")
 
-    # MITRE ATT&CK
-    for m in report.get("mitre_attcks", []) or []:
-        tid       = m.get("attck_id") or ""
-        technique = m.get("technique") or ""
-        tactic    = (m.get("tactic") or "unknown").upper()[:20]
+    # MITRE ATT&CK  (key: "mitre_attcks" | "mitre_attacks" | "attack_matrix")
+    for m in (report.get("mitre_attcks") or report.get("mitre_attacks") or
+              report.get("attack_matrix") or []):
+        if not isinstance(m, dict): continue
+        tid       = m.get("attck_id") or m.get("id") or m.get("technique_id") or ""
+        technique = m.get("technique") or m.get("name") or ""
+        tactic    = (m.get("tactic") or m.get("category") or "unknown").upper()[:20]
         if tid:
             _ha_node("MITRE", "#9370DB", f"{tid}: {technique}", f"MITRE_{tactic}")
 
