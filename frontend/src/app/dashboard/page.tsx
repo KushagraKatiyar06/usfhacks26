@@ -4,70 +4,32 @@ import { useCallback, useRef, useState } from 'react';
 import Header from '@/components/Header';
 import FileIntakePanel, { type FileInfo } from '@/components/FileIntakePanel';
 import BehavioralAnalysisPanel, { type StaticResult } from '@/components/BehavioralAnalysisPanel';
-import ThreatReportPanel, { type ReportData } from '@/components/ThreatReportPanel';
+import ThreatReportPanel, {
+  type ReportStages,
+  type Stage1Data,
+  type Stage2Data,
+  type Stage3Data,
+  type Stage4Data,
+} from '@/components/ThreatReportPanel';
 import SandboxSimulation from '@/components/SandboxSimulation';
-import { type Finding } from '@/lib/data';
 
 const STAGE_DURATIONS = [800, 1500, 2500, 1000, 2000, 800];
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
-
-// Map pipeline report → Finding[] for the threat report panel
-function buildFindings(report: Record<string, unknown>, fullResult: Record<string, unknown>): Finding[] {
-  const findings: Finding[] = [];
-  const sa = fullResult?.static_analysis as Record<string, unknown> | undefined;
-
-  if (sa?.threat_level && ['HIGH', 'CRITICAL'].includes(sa.threat_level as string)) {
-    findings.push({ type: 'critical', label: 'CRITICAL', text: `Static threat level: ${sa.threat_level}` });
-  }
-
-  const techniques = (report.mitre_techniques ?? []) as Array<{ id: string; name: string; tactic: string }>;
-  techniques.slice(0, 3).forEach(t => {
-    findings.push({ type: 'warn', label: t.id, text: `${t.name} — ${t.tactic}` });
-  });
-
-  const iocs = (report.iocs ?? []) as string[];
-  iocs.slice(0, 2).forEach(ioc => {
-    findings.push({ type: 'critical', label: 'IOC', text: ioc });
-  });
-
-  if (findings.length === 0) {
-    findings.push({ type: 'ok', label: 'INFO', text: 'Analysis complete. Review details below.' });
-  }
-  return findings;
-}
-
-// Map action_plan or containment_steps → mitigations string[]
-function buildMitigations(report: Record<string, unknown>): string[] {
-  const CIRCLED = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧'];
-  const plan = (report.action_plan ?? []) as Array<{ priority?: number; action: string }>;
-  if (plan.length > 0) {
-    return plan
-      .slice()
-      .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
-      .map((step, i) => `${CIRCLED[i] ?? `${i + 1}.`} ${step.action}`)
-      .slice(0, 7);
-  }
-  const steps = (report.containment_steps ?? []) as string[];
-  return steps.map((s, i) => `${CIRCLED[i] ?? `${i + 1}.`} ${s}`).slice(0, 7);
-}
 
 export default function Dashboard() {
   const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
   const [analysisRunning, setAnalysisRunning] = useState(false);
   const [currentStage, setCurrentStage] = useState(-1);
   const [stageDone, setStageDone] = useState<boolean[]>(Array(6).fill(false));
-  const [reportVisible, setReportVisible] = useState(false);
-  const [reportData, setReportData] = useState<ReportData | null>(null);
+  const [reportStages, setReportStages] = useState<ReportStages>({});
   const [staticData, setStaticData] = useState<StaticResult | null>(null);
-  const [reportPending, setReportPending] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const animDoneRef = useRef(false);
   const apiDoneRef = useRef(false);
 
-  function tryShowReport() {
+  // Called when both animation and pipeline 'done' event have fired
+  function tryFinish() {
     if (animDoneRef.current && apiDoneRef.current) {
-      setReportPending(false);
-      setReportVisible(true);
       setAnalysisRunning(false);
       setCurrentStage(-1);
     }
@@ -77,10 +39,8 @@ export default function Dashboard() {
     if (analysisRunning || !fileInfo) return;
 
     setAnalysisRunning(true);
-    setReportVisible(false);
-    setReportData(null);
+    setReportStages({});
     setStaticData(null);
-    setReportPending(false);
     setCurrentStage(-1);
     setStageDone(Array(6).fill(false));
     animDoneRef.current = false;
@@ -102,57 +62,70 @@ export default function Dashboard() {
           ws.onmessage = (ev) => {
             const msg = JSON.parse(ev.data as string) as Record<string, unknown>;
 
-            // Static analysis complete → populate behavioral panel with real data
+            // Sandbox static analysis → populate behavioral panel
             if (msg.event === 'static_analysis' && msg.status === 'complete' && msg.data) {
               setStaticData(msg.data as StaticResult);
             }
 
-            // Pipeline done → build ReportData and show report
-            if (msg.event === 'done' && msg.status === 'complete' && msg.data) {
+            // Streaming report stages — each card renders as soon as its data arrives
+            if (msg.event === 'report_stage' && msg.data) {
+              const stageNum = msg.stage as number;
+              const data = msg.data as Record<string, unknown>;
+
+              setReportStages(prev => {
+                switch (stageNum) {
+                  case 1: return { ...prev, stage1: data as unknown as Stage1Data };
+                  case 2: return { ...prev, stage2: data as unknown as Stage2Data };
+                  case 3: return { ...prev, stage3: data as unknown as Stage3Data };
+                  case 4: return { ...prev, stage4: data as unknown as Stage4Data };
+                  default: return prev;
+                }
+              });
+            }
+
+            // Pipeline fully complete — hydrate any missed stages from the done payload
+            if (msg.event === 'done' && msg.data) {
               const result = msg.data as Record<string, unknown>;
               const report = (result.report ?? {}) as Record<string, unknown>;
 
-              const rd: ReportData = {
-                malware_type: (report.malware_type as string) ?? 'UNKNOWN',
-                risk_score: (report.risk_score as number) ?? 50,
-                classification_confidence: Math.round(((report.confidence as number) ?? 0.9) * 100),
-                behavior_confidence: Math.round((((result.static_analysis as Record<string, unknown>)?.confidence as number) ?? 0.85) * 100),
-                findings: buildFindings(report, result),
-                mitigations: buildMitigations(report),
-                reasoning: (report.executive_summary as string) ?? '',
-                mitre_techniques: (report.mitre_techniques as ReportData['mitre_techniques']) ?? [],
-                iocs: (report.iocs as string[]) ?? [],
-                yara_rule: (report.yara_rule as string) ?? '',
-              };
+              // Fill in any stages that didn't arrive via report_stage events
+              if (report.stage1 || report.stage2 || report.stage3 || report.stage4) {
+                setReportStages(prev => ({
+                  stage1: prev.stage1 ?? (report.stage1 as Stage1Data | undefined),
+                  stage2: prev.stage2 ?? (report.stage2 as Stage2Data | undefined),
+                  stage3: prev.stage3 ?? (report.stage3 as Stage3Data | undefined),
+                  stage4: prev.stage4 ?? (report.stage4 as Stage4Data | undefined),
+                }));
+              }
 
-              setReportData(rd);
               apiDoneRef.current = true;
-              tryShowReport();
+              tryFinish();
             }
 
             if (msg.event === 'error') {
               console.error('Analysis error:', msg.message);
               apiDoneRef.current = true;
-              tryShowReport();
+              tryFinish();
             }
           };
 
           ws.onerror = () => {
             console.error('WebSocket connection failed');
             apiDoneRef.current = true;
-            tryShowReport();
+            tryFinish();
           };
         })
         .catch(err => {
           console.error('Upload error:', err);
           apiDoneRef.current = true;
-          tryShowReport();
+          tryFinish();
         });
     } else {
-      // Demo mode — no real file, animation only
+      // Demo mode — no real file, animation runs, report panel shows demo state
       apiDoneRef.current = true;
     }
 
+    // ── Circuit board stage animation (independent of API) ────────────────
     let idx = 0;
 
     function nextStage() {
@@ -172,18 +145,7 @@ export default function Dashboard() {
         setTimeout(() => {
           setStageDone(prev => { const n = [...prev]; n[5] = true; return n; });
           animDoneRef.current = true;
-
-          if (apiDoneRef.current) {
-            setReportPending(false);
-            setReportVisible(true);
-            setAnalysisRunning(false);
-            setCurrentStage(-1);
-          } else {
-            setReportPending(true);
-            setReportVisible(true);
-            setAnalysisRunning(false);
-            setCurrentStage(-1);
-          }
+          tryFinish();
         }, STAGE_DURATIONS[5]);
         return;
       }
@@ -195,6 +157,8 @@ export default function Dashboard() {
     nextStage();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysisRunning, fileInfo]);
+
+  const hasReportData = !!(reportStages.stage1);
 
   return (
     <>
@@ -211,11 +175,7 @@ export default function Dashboard() {
           stageDone={stageDone}
           staticData={staticData}
         />
-        <ThreatReportPanel
-          visible={reportVisible}
-          data={reportData}
-          pending={reportPending}
-        />
+        <ThreatReportPanel stages={reportStages} />
         <SandboxSimulation />
       </div>
     </>
