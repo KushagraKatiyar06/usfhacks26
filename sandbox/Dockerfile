@@ -1,12 +1,31 @@
-FROM node:18-slim
+FROM python:3.11-slim
 
+# System tools
 RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    && pip3 install jsbeautifier python-dotenv "e2b==2.19.0" --break-system-packages
+    binutils \
+    libimage-exiftool-perl \
+    binwalk \
+    yara \
+    libssl-dev \
+    strace \
+    curl \
+    mono-utils \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+    jsbeautifier \
+    pefile \
+    yara-python \
+    python-dotenv \
+    dnfile
 
 WORKDIR /analysis
 COPY analyze.py .
-COPY .env .
+COPY dynamic_analyze.js .
+COPY rules/ ./rules/
+
+USER nobody
 
 ENTRYPOINT ["python3", "analyze.py"]

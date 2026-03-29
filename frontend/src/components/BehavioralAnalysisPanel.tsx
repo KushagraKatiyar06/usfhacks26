@@ -6,16 +6,116 @@ import { ARCH_DETAILS, DEMO_CONNS, DEMO_LOGS, DEMO_PROCS, type LogEntry, type Co
 
 const STAGES = ['UPLOAD', 'SANDBOX', 'MONITOR', 'PARSE', 'AI ANALYZE', 'REPORT'];
 
-interface Props {
-  currentStage: number; // -1 = idle, 0-5 = stage index
-  stageDone: boolean[];
+export interface StaticResult {
+  file_type: string;
+  file_name?: string;
+  sha256?: string;
+  entropy?: number;
+  is_obfuscated?: boolean;
+  threat_level?: string;
+  behaviors?: string[];
+  mitre_techniques?: string[];
+  dangerous_functions?: string[];
+  suspicious_imports?: string[];
+  urls_found?: string[];
+  ips_found?: string[];
+  domains_found?: string[];
+  registry_keys?: string[];
+  dropped_files?: string[];
+  yara_matches?: string[];
+  strings_sample?: string[];
+  pe_info?: {
+    architecture?: string;
+    compile_time?: string;
+    is_dll?: boolean;
+    sections?: { name: string; entropy: number }[];
+    imports?: string[];
+  };
 }
 
-export default function BehavioralAnalysisPanel({ currentStage, stageDone }: Props) {
+interface Props {
+  currentStage: number;
+  stageDone: boolean[];
+  staticData?: StaticResult | null;
+}
+
+// Convert real static analysis into log entries
+function buildRealLogs(s: StaticResult): LogEntry[] {
+  const logs: LogEntry[] = [];
+  let sec = 1;
+
+  logs.push({ sec: sec++, tag: 'info', cat: 'SYS', msg: `File loaded: ${s.file_name ?? 'unknown'} [${s.file_type}]` });
+  if (s.sha256) logs.push({ sec: sec++, tag: 'info', cat: 'HASH', msg: `SHA256: ${s.sha256}` });
+  if (s.entropy !== undefined) {
+    const tag = s.entropy > 7 ? 'crit' : s.entropy > 6 ? 'warn' : 'info';
+    logs.push({ sec: sec++, tag, cat: 'ENTR', msg: `Entropy: ${s.entropy} — ${s.entropy > 7 ? 'likely packed/encrypted' : s.entropy > 6 ? 'elevated entropy' : 'normal'}` });
+  }
+  if (s.is_obfuscated) logs.push({ sec: sec++, tag: 'warn', cat: 'OBFS', msg: 'Obfuscation detected in file content' });
+  if (s.yara_matches?.length) {
+    s.yara_matches.forEach(m => logs.push({ sec: sec++, tag: 'crit', cat: 'YARA', msg: `YARA match: ${m}` }));
+  }
+
+  const HIGH = new Set(['Process injection', 'AMSI bypass - antivirus evasion', 'ETW patching - event log evasion',
+    'Shadow copy deletion (ransomware)', 'Reflective .NET assembly loading (fileless)', 'Process memory manipulation']);
+  const MED = new Set(['PowerShell execution', 'Cryptographic operations', 'Dynamic code loading',
+    'Hardcoded AES key detected', 'Packed or encrypted section (obfuscation)', 'Network C2 communication']);
+
+  (s.behaviors ?? []).forEach(b => {
+    const tag: LogEntry['tag'] = HIGH.has(b) ? 'crit' : MED.has(b) ? 'warn' : 'info';
+    logs.push({ sec: sec++, tag, cat: 'BEHV', msg: b });
+  });
+  (s.mitre_techniques ?? []).forEach(t => logs.push({ sec: sec++, tag: 'warn', cat: 'MITR', msg: t }));
+  (s.dropped_files ?? []).forEach(f => logs.push({ sec: sec++, tag: 'crit', cat: 'FILE', msg: `DROP: ${f}` }));
+  (s.registry_keys ?? []).forEach(r => logs.push({ sec: sec++, tag: 'warn', cat: 'REG', msg: `WRITE: ${r}` }));
+
+  return logs;
+}
+
+// Convert suspicious imports / PE sections into process-tree entries
+function buildRealProcs(s: StaticResult): Process[] {
+  const procs: Process[] = [];
+  const HIGH_IMPORTS = ['createremotethread', 'virtualalloc', 'writeprocessmemory', 'ntcreatethreadex',
+    'amsiscanbuffer', 'etweventwrite', 'shellex', 'winexec'];
+
+  (s.suspicious_imports ?? s.dangerous_functions ?? []).slice(0, 7).forEach((imp, i) => {
+    const low = imp.toLowerCase();
+    const isHigh = HIGH_IMPORTS.some(h => low.includes(h));
+    procs.push({
+      name: imp.split('!')[1] ?? imp,
+      pid: 1000 + i * 17,
+      parent: imp.includes('!') ? imp.split('!')[0] : s.file_name ?? 'sample',
+      color: isHigh ? 'red' : 'yellow',
+    });
+  });
+
+  return procs;
+}
+
+// Convert IPs / URLs into connection entries
+function buildRealConns(s: StaticResult): Connection[] {
+  const conns: Connection[] = [];
+  let ts = 0;
+
+  const fmt = (n: number) => `00:${String(n).padStart(2, '0')}`;
+
+  (s.ips_found ?? []).slice(0, 3).forEach(ip => {
+    conns.push({ ts: fmt(ts++), dir: 'OUT', dst: ip, port: 443, size: '?KB', type: 'SUSPECT IP' });
+  });
+  (s.urls_found ?? []).slice(0, 3).forEach(url => {
+    const host = url.replace(/https?:\/\//, '').split('/')[0];
+    conns.push({ ts: fmt(ts++), dir: 'OUT', dst: host, port: 80, size: '?KB', type: 'URL' });
+  });
+  (s.domains_found ?? []).slice(0, 2).forEach(d => {
+    conns.push({ ts: fmt(ts++), dir: 'OUT', dst: d, port: 443, size: '?KB', type: 'DOMAIN' });
+  });
+
+  return conns;
+}
+
+export default function BehavioralAnalysisPanel({ currentStage, stageDone, staticData }: Props) {
   const [activeTab, setActiveTab] = useState('process');
   const [logs, setLogs] = useState<LogEntry[]>([
     { sec: 0, tag: 'info', cat: 'SYS', msg: 'ThreatNet AI v2.4.1 — sandbox initialized' },
-    { sec: 0, tag: 'info', cat: 'SYS', msg: 'VirtualBox instance ready — WIN10_CLEAN_SNAPSHOT' },
     { sec: 0, tag: 'info', cat: 'SYS', msg: 'Awaiting specimen upload...' },
   ]);
   const [procs, setProcs] = useState<Process[]>([]);
@@ -26,7 +126,6 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone }: Pro
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const netAnimRef = useRef<number>(0);
 
-  // Auto-scroll logs
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [logs]);
@@ -36,22 +135,39 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone }: Pro
     setLogs(prev => [...prev, { ...entry, msg: `[${ts}] ${entry.msg}` }]);
   }
 
-  // React to stage changes
+  // When real static data arrives, populate panels
   useEffect(() => {
+    if (!staticData) return;
+
+    const realLogs = buildRealLogs(staticData);
+    const realProcs = buildRealProcs(staticData);
+    const realConns = buildRealConns(staticData);
+
+    // Stream logs with a short delay between each
+    realLogs.forEach((entry, i) => {
+      setTimeout(() => addLog(entry), i * 120);
+    });
+
+    setTimeout(() => setProcs(realProcs), 300);
+    setTimeout(() => setConns(realConns), 600);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staticData]);
+
+  // Stage-driven demo logs (only when no real data yet)
+  useEffect(() => {
+    if (staticData) return;
+
     if (currentStage === 1) {
-      // Sandbox start
-      setTimeout(() => addLog({ sec: 0, tag: 'info', cat: 'SYS', msg: 'Restoring WIN10_CLEAN_SNAPSHOT...' }), 0);
-      setTimeout(() => addLog({ sec: 0, tag: 'info', cat: 'SYS', msg: 'VM booted — transferring specimen via guestcontrol' }), 600);
-      setTimeout(() => addLog({ sec: 0, tag: 'info', cat: 'SYS', msg: 'Executing invoice_q4.exe in isolated environment' }), 1200);
+      setTimeout(() => addLog({ sec: 0, tag: 'info', cat: 'SYS', msg: 'Restoring clean snapshot...' }), 0);
+      setTimeout(() => addLog({ sec: 0, tag: 'info', cat: 'SYS', msg: 'VM booted — transferring specimen' }), 600);
+      setTimeout(() => addLog({ sec: 0, tag: 'info', cat: 'SYS', msg: 'Running static analysis tools...' }), 1200);
     }
     if (currentStage === 2) {
-      // Stream logs
       let delay = 0;
       DEMO_LOGS.forEach(entry => {
         setTimeout(() => addLog(entry), delay);
         delay += 350 + Math.random() * 200;
       });
-      // Stream procs
       setProcs([]);
       let pd = 0;
       DEMO_PROCS.forEach(p => {
@@ -60,7 +176,6 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone }: Pro
       });
     }
     if (currentStage === 3) {
-      // Stream connections
       setConns([]);
       DEMO_CONNS.forEach((c, i) => {
         setTimeout(() => setConns(prev => [...prev, c]), i * 600);
@@ -73,7 +188,6 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone }: Pro
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || activeTab !== 'network') return;
-
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -149,14 +263,12 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone }: Pro
 
   return (
     <Panel title="// BEHAVIORAL ANALYSIS ENGINE" className="center-panel" style={{ gridRow: 1 }}>
-      {/* Stage indicators */}
       <div className="stages">
         {STAGES.map((s, i) => (
           <div key={s} className={stageClass(i)}>{s}</div>
         ))}
       </div>
 
-      {/* Tabs */}
       <div className="tab-row">
         {['process', 'logs', 'network', 'arch'].map(tab => (
           <div
@@ -164,12 +276,11 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone }: Pro
             className={`tab ${activeTab === tab ? 'active' : ''}`}
             onClick={() => setActiveTab(tab)}
           >
-            {tab === 'process' ? 'PROCESS TREE' : tab === 'arch' ? 'ARCHITECTURE' : tab === 'network' ? 'NETWORK' : 'RAW LOGS'}
+            {tab === 'process' ? 'IMPORTS' : tab === 'arch' ? 'ARCHITECTURE' : tab === 'network' ? 'NETWORK' : 'RAW LOGS'}
           </div>
         ))}
       </div>
 
-      {/* PROCESS TREE */}
       {activeTab === 'process' && (
         <div className="proc-list">
           {procs.length === 0 ? (
@@ -177,7 +288,7 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone }: Pro
               Awaiting specimen...<span className="blink">_</span>
             </div>
           ) : procs.map(p => {
-            const indent = (p.parent === 'explorer.exe' || p.parent === 'services.exe') ? '' : '    ';
+            const indent = staticData ? '' : (p.parent === 'explorer.exe' || p.parent === 'services.exe') ? '' : '    ';
             const memMb = Math.round(Math.random() * 80 + 10);
             return (
               <div key={`${p.pid}-${p.name}`} className={`proc-item ${p.color === 'red' ? 'danger' : ''}`}>
@@ -185,14 +296,13 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone }: Pro
                 <span className={`proc-dot ${p.color}`} />
                 <span className="proc-name">{p.name}</span>
                 <span className="proc-pid">PID:{p.pid}</span>
-                <span className="proc-mem">{memMb}MB</span>
+                {!staticData && <span className="proc-mem">{memMb}MB</span>}
               </div>
             );
           })}
         </div>
       )}
 
-      {/* LOGS */}
       {activeTab === 'logs' && (
         <div className="log-terminal" ref={logRef}>
           {logs.map((l, i) => (
@@ -205,7 +315,6 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone }: Pro
         </div>
       )}
 
-      {/* NETWORK */}
       {activeTab === 'network' && (
         <>
           <div className="net-traffic">
@@ -217,7 +326,7 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone }: Pro
               {conns.length === 0 ? (
                 <span className="text-dim">No connections observed.</span>
               ) : conns.map((c, i) => {
-                const isExfil = c.type.includes('EXFIL') || c.type.includes('C2');
+                const isExfil = c.type.includes('EXFIL') || c.type.includes('C2') || c.type.includes('SUSPECT');
                 return (
                   <div key={i} style={{ color: isExfil ? 'var(--magenta)' : '#00ff88' }}>
                     [{c.ts}] {c.dir} → {c.dst}:{c.port} ({c.size}){' '}
@@ -230,7 +339,6 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone }: Pro
         </>
       )}
 
-      {/* ARCHITECTURE */}
       {activeTab === 'arch' && (
         <>
           <div style={{ marginBottom: 10 }}>

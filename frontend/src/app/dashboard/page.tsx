@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from 'react';
 import Header from '@/components/Header';
 import FileIntakePanel, { type FileInfo } from '@/components/FileIntakePanel';
-import BehavioralAnalysisPanel from '@/components/BehavioralAnalysisPanel';
+import BehavioralAnalysisPanel, { type StaticResult } from '@/components/BehavioralAnalysisPanel';
 import ThreatReportPanel, { type ReportData } from '@/components/ThreatReportPanel';
 import SandboxSimulation from '@/components/SandboxSimulation';
 
@@ -17,6 +17,7 @@ export default function Dashboard() {
   const [stageDone, setStageDone] = useState<boolean[]>(Array(6).fill(false));
   const [reportVisible, setReportVisible] = useState(false);
   const [reportData, setReportData] = useState<ReportData | null>(null);
+  const [staticData, setStaticData] = useState<StaticResult | null>(null);
   const [reportPending, setReportPending] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const animDoneRef = useRef(false);
@@ -37,13 +38,13 @@ export default function Dashboard() {
     setAnalysisRunning(true);
     setReportVisible(false);
     setReportData(null);
+    setStaticData(null);
     setReportPending(false);
     setCurrentStage(-1);
     setStageDone(Array(6).fill(false));
     animDoneRef.current = false;
     apiDoneRef.current = false;
 
-    // Start API call in parallel with animation (only if real file was uploaded)
     if (fileInfo.file) {
       const formData = new FormData();
       formData.append('file', fileInfo.file);
@@ -52,23 +53,21 @@ export default function Dashboard() {
           if (!r.ok) throw new Error(`API error ${r.status}`);
           return r.json();
         })
-        .then((data: { report: ReportData }) => {
+        .then((data: { static: StaticResult; dynamic_js?: unknown; dynamic_pe?: unknown; report: ReportData }) => {
+          setStaticData(data.static);
           setReportData(data.report);
           apiDoneRef.current = true;
           tryShowReport();
         })
         .catch(err => {
           console.error('Analysis API error:', err);
-          // Fall back to demo data on error
           apiDoneRef.current = true;
           tryShowReport();
         });
     } else {
-      // Demo mode — no real file
       apiDoneRef.current = true;
     }
 
-    // Run animation stages
     let idx = 0;
 
     function nextStage() {
@@ -90,13 +89,11 @@ export default function Dashboard() {
           animDoneRef.current = true;
 
           if (apiDoneRef.current) {
-            // API already finished — show immediately
             setReportPending(false);
             setReportVisible(true);
             setAnalysisRunning(false);
             setCurrentStage(-1);
           } else {
-            // API still running — show pending state
             setReportPending(true);
             setReportVisible(true);
             setAnalysisRunning(false);
@@ -127,6 +124,7 @@ export default function Dashboard() {
         <BehavioralAnalysisPanel
           currentStage={currentStage}
           stageDone={stageDone}
+          staticData={staticData}
         />
         <ThreatReportPanel
           visible={reportVisible}
