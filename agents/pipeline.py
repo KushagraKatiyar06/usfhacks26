@@ -270,8 +270,8 @@ Format:
   "confidence": 0.99
 }""",
         user_message=f"Generate technical analysis: {json.dumps(ctx)}",
-        timeout=CALL_TIMEOUT,
-        max_tokens=1500,
+        timeout=60,
+        max_tokens=3000,
     )
 
 
@@ -303,8 +303,8 @@ Format:
   "confidence": 0.99
 }""",
         user_message=f"Generate remediation plan: {json.dumps(ctx)}",
-        timeout=CALL_TIMEOUT,
-        max_tokens=1200,
+        timeout=60,
+        max_tokens=3000,
     )
 
 def run_pipeline(file_metadata: dict, progress_cb=None, vt_data: dict | None = None):
