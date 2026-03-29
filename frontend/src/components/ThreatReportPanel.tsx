@@ -12,6 +12,10 @@ export interface ReportData {
   findings: Finding[];
   mitigations: string[];
   reasoning: string;
+  // Extended fields from AI pipeline
+  mitre_techniques?: Array<{ id: string; name: string; tactic: string }>;
+  iocs?: string[];
+  yara_rule?: string;
 }
 
 interface Props {
@@ -30,6 +34,9 @@ export default function ThreatReportPanel({ visible, data, pending }: Props) {
   const findings = data?.findings ?? DEMO_FINDINGS;
   const mitigations = data?.mitigations ?? DEMO_MITIGATIONS;
   const reasoning = data?.reasoning ?? DEMO_REASONING;
+  const mitreTechniques = data?.mitre_techniques ?? [];
+  const iocs = data?.iocs ?? [];
+  const yaraRule = data?.yara_rule ?? '';
 
   useEffect(() => {
     if (visible) {
@@ -99,8 +106,70 @@ export default function ThreatReportPanel({ visible, data, pending }: Props) {
             ))}
           </div>
 
+          {mitreTechniques.length > 0 && (
+            <>
+              <div className="section-divider" />
+              <div className="f9 text-dim">MITRE ATT&amp;CK TECHNIQUES</div>
+              <div style={{ marginTop: 6, overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 9 }}>
+                  <thead>
+                    <tr style={{ color: 'var(--text-dim)', borderBottom: '1px solid rgba(0,245,255,0.15)' }}>
+                      <th style={{ textAlign: 'left', padding: '3px 4px', fontWeight: 400 }}>ID</th>
+                      <th style={{ textAlign: 'left', padding: '3px 4px', fontWeight: 400 }}>TECHNIQUE</th>
+                      <th style={{ textAlign: 'left', padding: '3px 4px', fontWeight: 400 }}>TACTIC</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mitreTechniques.map((t, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid rgba(0,245,255,0.05)', color: i % 2 === 0 ? 'var(--text-cyan)' : '#7ab8cc' }}>
+                        <td style={{ padding: '3px 4px', fontFamily: "'Orbitron', monospace", color: 'var(--magenta)', whiteSpace: 'nowrap' }}>{t.id}</td>
+                        <td style={{ padding: '3px 4px' }}>{t.name}</td>
+                        <td style={{ padding: '3px 4px', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>{t.tactic}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {iocs.length > 0 && (
+            <>
+              <div className="section-divider" />
+              <div className="f9 text-dim">INDICATORS OF COMPROMISE</div>
+              <div style={{ marginTop: 6, fontSize: 9, lineHeight: 1.9 }}>
+                {iocs.map((ioc, i) => (
+                  <div key={i} style={{ padding: '2px 0', borderBottom: '1px solid rgba(255,45,158,0.08)', color: 'var(--magenta)', wordBreak: 'break-all' }}>
+                    <span style={{ color: 'var(--text-dim)', marginRight: 6 }}>▸</span>{ioc}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {yaraRule && (
+            <>
+              <div className="section-divider" />
+              <div className="f9 text-dim">YARA DETECTION RULE</div>
+              <pre style={{
+                marginTop: 6,
+                padding: 10,
+                background: '#010814',
+                border: '1px solid rgba(0,245,255,0.12)',
+                fontSize: 9,
+                color: '#00ff88',
+                overflowX: 'auto',
+                lineHeight: 1.6,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}>
+                {yaraRule}
+              </pre>
+            </>
+          )}
+
           <div className="section-divider" />
-          <div className="f9 text-dim">AI REASONING</div>
+          <div className="f9 text-dim">EXECUTIVE SUMMARY</div>
           <div style={{ fontSize: 10, lineHeight: 1.65, marginTop: 6, color: '#7ab8cc', fontStyle: 'italic' }}>
             {reasoning}
           </div>
