@@ -23,3 +23,15 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+backend/venv/
+backend/.venv/
+
+# Sandbox env
+sandbox/.env
