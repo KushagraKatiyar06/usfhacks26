@@ -4,10 +4,11 @@ import { useCallback, useRef, useState } from 'react';
 import Header from '@/components/Header';
 import FileIntakePanel, { type FileInfo } from '@/components/FileIntakePanel';
 import BehavioralAnalysisPanel from '@/components/BehavioralAnalysisPanel';
-import ThreatReportPanel from '@/components/ThreatReportPanel';
+import ThreatReportPanel, { type ReportData } from '@/components/ThreatReportPanel';
 import SandboxSimulation from '@/components/SandboxSimulation';
 
 const STAGE_DURATIONS = [800, 1500, 2500, 1000, 2000, 800];
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 export default function Dashboard() {
   const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
@@ -15,15 +16,59 @@ export default function Dashboard() {
   const [currentStage, setCurrentStage] = useState(-1);
   const [stageDone, setStageDone] = useState<boolean[]>(Array(6).fill(false));
   const [reportVisible, setReportVisible] = useState(false);
+  const [reportData, setReportData] = useState<ReportData | null>(null);
+  const [reportPending, setReportPending] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const animDoneRef = useRef(false);
+  const apiDoneRef = useRef(false);
+
+  function tryShowReport() {
+    if (animDoneRef.current && apiDoneRef.current) {
+      setReportPending(false);
+      setReportVisible(true);
+      setAnalysisRunning(false);
+      setCurrentStage(-1);
+    }
+  }
 
   const startAnalysis = useCallback(() => {
-    if (analysisRunning) return;
+    if (analysisRunning || !fileInfo) return;
+
     setAnalysisRunning(true);
     setReportVisible(false);
+    setReportData(null);
+    setReportPending(false);
     setCurrentStage(-1);
     setStageDone(Array(6).fill(false));
+    animDoneRef.current = false;
+    apiDoneRef.current = false;
 
+    // Start API call in parallel with animation (only if real file was uploaded)
+    if (fileInfo.file) {
+      const formData = new FormData();
+      formData.append('file', fileInfo.file);
+      fetch(`${API_URL}/analyze`, { method: 'POST', body: formData })
+        .then(r => {
+          if (!r.ok) throw new Error(`API error ${r.status}`);
+          return r.json();
+        })
+        .then((data: { report: ReportData }) => {
+          setReportData(data.report);
+          apiDoneRef.current = true;
+          tryShowReport();
+        })
+        .catch(err => {
+          console.error('Analysis API error:', err);
+          // Fall back to demo data on error
+          apiDoneRef.current = true;
+          tryShowReport();
+        });
+    } else {
+      // Demo mode — no real file
+      apiDoneRef.current = true;
+    }
+
+    // Run animation stages
     let idx = 0;
 
     function nextStage() {
@@ -42,9 +87,21 @@ export default function Dashboard() {
       if (idx === 5) {
         setTimeout(() => {
           setStageDone(prev => { const n = [...prev]; n[5] = true; return n; });
-          setReportVisible(true);
-          setAnalysisRunning(false);
-          setCurrentStage(-1);
+          animDoneRef.current = true;
+
+          if (apiDoneRef.current) {
+            // API already finished — show immediately
+            setReportPending(false);
+            setReportVisible(true);
+            setAnalysisRunning(false);
+            setCurrentStage(-1);
+          } else {
+            // API still running — show pending state
+            setReportPending(true);
+            setReportVisible(true);
+            setAnalysisRunning(false);
+            setCurrentStage(-1);
+          }
         }, STAGE_DURATIONS[5]);
         return;
       }
@@ -54,7 +111,8 @@ export default function Dashboard() {
     }
 
     nextStage();
-  }, [analysisRunning]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisRunning, fileInfo]);
 
   return (
     <>
@@ -70,7 +128,11 @@ export default function Dashboard() {
           currentStage={currentStage}
           stageDone={stageDone}
         />
-        <ThreatReportPanel visible={reportVisible} />
+        <ThreatReportPanel
+          visible={reportVisible}
+          data={reportData}
+          pending={reportPending}
+        />
         <SandboxSimulation />
       </div>
     </>
