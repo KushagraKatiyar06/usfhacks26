@@ -11,21 +11,30 @@ MODEL = "claude-haiku-4-5"
 
 CALL_TIMEOUT = 45  # seconds — hard limit per Claude call
 
-def call_claude(system_prompt: str, user_message: str, max_tokens: int = 2000) -> dict:
-    """Call Claude and return parsed JSON response."""
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=max_tokens,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}]
-    )
-    text = response.content[0].text.strip()
-    # Strip markdown if present
-    if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-    return json.loads(text.strip())
+def call_claude(system_prompt: str, user_message: str, timeout: int = 45, max_tokens: int = 2000) -> dict:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            lambda: client.messages.create(
+                model=MODEL,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_message}]
+            )
+        )
+        try:
+            response = future.result(timeout=timeout)
+            text = response.content[0].text.strip()
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            return json.loads(text.strip())
+        except concurrent.futures.TimeoutError:
+            print(f"WARNING: Claude call timed out after {timeout}s")
+            return {"error": "timeout", "partial": True}
+        except Exception as e:
+            print(f"WARNING: Claude call failed: {e}")
+            return {}
 
 
 def _call_claude_timed(system_prompt: str, user_message: str,
@@ -164,13 +173,10 @@ def run_remediation(static_output: dict, mitre_output: dict, attempt: int = 1) -
             "confidence": 0.9,
             "needs_rerun": false
         }""",
-        user_message=f"""Generate remediation for this malware.
-        Static analysis: {json.dumps(static_output)}
-        MITRE techniques: {json.dumps(mitre_output)}
-        Use the MITRE techniques above directly — no need to look them up."""
+        user_message=f"Generate remediation. Static: {json.dumps(static_output)}. MITRE: {json.dumps(mitre_output)}"
     )
     if result.get("needs_rerun") and attempt < 2:
-        print("⚠️ Confidence low, rerunning remediation...")
+        print("⚠️ Confidence low, rerunning...")
         return run_remediation(static_output, mitre_output, attempt + 1)
     return result
 
