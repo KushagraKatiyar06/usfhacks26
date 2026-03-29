@@ -6,6 +6,7 @@ import FileIntakePanel, { type FileInfo } from '@/components/FileIntakePanel';
 import BehavioralAnalysisPanel, { type StaticResult } from '@/components/BehavioralAnalysisPanel';
 import ThreatReportPanel, { type ReportData } from '@/components/ThreatReportPanel';
 import SandboxSimulation from '@/components/SandboxSimulation';
+import LinuxSandboxPanel from '@/components/LinuxSandboxPanel';
 import { type Finding } from '@/lib/data';
 
 const STAGE_DURATIONS = [800, 1500, 2500, 1000, 2000, 800];
@@ -217,6 +218,7 @@ export default function Dashboard() {
           pending={reportPending}
         />
         <SandboxSimulation />
+        <LinuxSandboxPanel staticData={staticData} />
       </div>
     </>
   );
