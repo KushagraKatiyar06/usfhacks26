@@ -6,9 +6,50 @@ import FileIntakePanel, { type FileInfo } from '@/components/FileIntakePanel';
 import BehavioralAnalysisPanel, { type StaticResult } from '@/components/BehavioralAnalysisPanel';
 import ThreatReportPanel, { type ReportData } from '@/components/ThreatReportPanel';
 import SandboxSimulation from '@/components/SandboxSimulation';
+import { type Finding } from '@/lib/data';
 
 const STAGE_DURATIONS = [800, 1500, 2500, 1000, 2000, 800];
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+
+// Map pipeline report → Finding[] for the threat report panel
+function buildFindings(report: Record<string, unknown>, fullResult: Record<string, unknown>): Finding[] {
+  const findings: Finding[] = [];
+  const sa = fullResult?.static_analysis as Record<string, unknown> | undefined;
+
+  if (sa?.threat_level && ['HIGH', 'CRITICAL'].includes(sa.threat_level as string)) {
+    findings.push({ type: 'critical', label: 'CRITICAL', text: `Static threat level: ${sa.threat_level}` });
+  }
+
+  const techniques = (report.mitre_techniques ?? []) as Array<{ id: string; name: string; tactic: string }>;
+  techniques.slice(0, 3).forEach(t => {
+    findings.push({ type: 'warn', label: t.id, text: `${t.name} — ${t.tactic}` });
+  });
+
+  const iocs = (report.iocs ?? []) as string[];
+  iocs.slice(0, 2).forEach(ioc => {
+    findings.push({ type: 'critical', label: 'IOC', text: ioc });
+  });
+
+  if (findings.length === 0) {
+    findings.push({ type: 'ok', label: 'INFO', text: 'Analysis complete. Review details below.' });
+  }
+  return findings;
+}
+
+// Map action_plan or containment_steps → mitigations string[]
+function buildMitigations(report: Record<string, unknown>): string[] {
+  const CIRCLED = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧'];
+  const plan = (report.action_plan ?? []) as Array<{ priority?: number; action: string }>;
+  if (plan.length > 0) {
+    return plan
+      .slice()
+      .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
+      .map((step, i) => `${CIRCLED[i] ?? `${i + 1}.`} ${step.action}`)
+      .slice(0, 7);
+  }
+  const steps = (report.containment_steps ?? []) as string[];
+  return steps.map((s, i) => `${CIRCLED[i] ?? `${i + 1}.`} ${s}`).slice(0, 7);
+}
 
 export default function Dashboard() {
   const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
@@ -48,23 +89,67 @@ export default function Dashboard() {
     if (fileInfo.file) {
       const formData = new FormData();
       formData.append('file', fileInfo.file);
-      fetch(`${API_URL}/analyze`, { method: 'POST', body: formData })
+
+      fetch(`${API_URL}/upload`, { method: 'POST', body: formData })
         .then(r => {
-          if (!r.ok) throw new Error(`API error ${r.status}`);
+          if (!r.ok) throw new Error(`Upload error ${r.status}`);
           return r.json();
         })
-        .then((data: { static: StaticResult; dynamic_js?: unknown; dynamic_pe?: unknown; report: ReportData }) => {
-          setStaticData(data.static);
-          setReportData(data.report);
-          apiDoneRef.current = true;
-          tryShowReport();
+        .then(({ job_id }: { job_id: string }) => {
+          const wsBase = API_URL.replace(/^https?/, s => (s === 'https' ? 'wss' : 'ws'));
+          const ws = new WebSocket(`${wsBase}/ws/${job_id}`);
+
+          ws.onmessage = (ev) => {
+            const msg = JSON.parse(ev.data as string) as Record<string, unknown>;
+
+            // Static analysis complete → populate behavioral panel with real data
+            if (msg.event === 'static_analysis' && msg.status === 'complete' && msg.data) {
+              setStaticData(msg.data as StaticResult);
+            }
+
+            // Pipeline done → build ReportData and show report
+            if (msg.event === 'done' && msg.status === 'complete' && msg.data) {
+              const result = msg.data as Record<string, unknown>;
+              const report = (result.report ?? {}) as Record<string, unknown>;
+
+              const rd: ReportData = {
+                malware_type: (report.malware_type as string) ?? 'UNKNOWN',
+                risk_score: (report.risk_score as number) ?? 50,
+                classification_confidence: Math.round(((report.confidence as number) ?? 0.9) * 100),
+                behavior_confidence: Math.round((((result.static_analysis as Record<string, unknown>)?.confidence as number) ?? 0.85) * 100),
+                findings: buildFindings(report, result),
+                mitigations: buildMitigations(report),
+                reasoning: (report.executive_summary as string) ?? '',
+                mitre_techniques: (report.mitre_techniques as ReportData['mitre_techniques']) ?? [],
+                iocs: (report.iocs as string[]) ?? [],
+                yara_rule: (report.yara_rule as string) ?? '',
+              };
+
+              setReportData(rd);
+              apiDoneRef.current = true;
+              tryShowReport();
+            }
+
+            if (msg.event === 'error') {
+              console.error('Analysis error:', msg.message);
+              apiDoneRef.current = true;
+              tryShowReport();
+            }
+          };
+
+          ws.onerror = () => {
+            console.error('WebSocket connection failed');
+            apiDoneRef.current = true;
+            tryShowReport();
+          };
         })
         .catch(err => {
-          console.error('Analysis API error:', err);
+          console.error('Upload error:', err);
           apiDoneRef.current = true;
           tryShowReport();
         });
     } else {
+      // Demo mode — no real file, animation only
       apiDoneRef.current = true;
     }
 
