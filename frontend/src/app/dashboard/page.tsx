@@ -60,52 +60,86 @@ export default function Dashboard() {
           const ws = new WebSocket(`${wsBase}/ws/${job_id}`);
 
           ws.onmessage = (ev) => {
-            const msg = JSON.parse(ev.data as string) as Record<string, unknown>;
-
-            // Sandbox static analysis → populate behavioral panel
-            if (msg.event === 'static_analysis' && msg.status === 'complete' && msg.data) {
-              setStaticData(msg.data as StaticResult);
+            let msg: Record<string, unknown>;
+            try {
+              msg = JSON.parse(ev.data as string) as Record<string, unknown>;
+            } catch (parseErr) {
+              console.error('[WS] JSON parse error:', parseErr, 'raw:', ev.data);
+              return;
             }
 
-            // Streaming report stages — each card renders as soon as its data arrives
-            if (msg.event === 'report_stage' && msg.data) {
-              const stageNum = msg.stage as number;
-              const data = msg.data as Record<string, unknown>;
+            // ── Log every event so we can see what's arriving ──────────────
+            console.log('[WS event]', msg.event,
+              'stage' in msg ? `stage=${msg.stage}` : '',
+              'status' in msg ? `status=${msg.status}` : '',
+              msg);
 
-              setReportStages(prev => {
-                switch (stageNum) {
-                  case 1: return { ...prev, stage1: data as unknown as Stage1Data };
-                  case 2: return { ...prev, stage2: data as unknown as Stage2Data };
-                  case 3: return { ...prev, stage3: data as unknown as Stage3Data };
-                  case 4: return { ...prev, stage4: data as unknown as Stage4Data };
-                  default: return prev;
-                }
-              });
-            }
-
-            // Pipeline fully complete — hydrate any missed stages from the done payload
-            if (msg.event === 'done' && msg.data) {
-              const result = msg.data as Record<string, unknown>;
-              const report = (result.report ?? {}) as Record<string, unknown>;
-
-              // Fill in any stages that didn't arrive via report_stage events
-              if (report.stage1 || report.stage2 || report.stage3 || report.stage4) {
-                setReportStages(prev => ({
-                  stage1: prev.stage1 ?? (report.stage1 as Stage1Data | undefined),
-                  stage2: prev.stage2 ?? (report.stage2 as Stage2Data | undefined),
-                  stage3: prev.stage3 ?? (report.stage3 as Stage3Data | undefined),
-                  stage4: prev.stage4 ?? (report.stage4 as Stage4Data | undefined),
-                }));
+            try {
+              // Sandbox static analysis → populate behavioral panel
+              if (msg.event === 'static_analysis' && msg.status === 'complete' && msg.data) {
+                setStaticData(msg.data as StaticResult);
               }
 
-              apiDoneRef.current = true;
-              tryFinish();
-            }
+              // agent_complete — emitted when each Claude agent finishes
+              // (format: {event:"agent_complete", agent:"ingestion_agent", status:"complete", data:{...}})
+              if (msg.event === 'agent_complete' && msg.status === 'complete' && msg.data) {
+                console.log('[WS] agent_complete:', msg.agent);
+                // If the agent carries static-analysis-like data, surface it in the behavioral panel
+                const agentData = msg.data as Record<string, unknown>;
+                if (msg.agent === 'static_analysis_agent' && agentData) {
+                  setStaticData(agentData as unknown as StaticResult);
+                }
+              }
 
-            if (msg.event === 'error') {
-              console.error('Analysis error:', msg.message);
-              apiDoneRef.current = true;
-              tryFinish();
+              // Streaming report stages — each card renders as soon as its data arrives
+              if (msg.event === 'report_stage' && msg.data) {
+                // Parse stage number robustly (JSON number or string)
+                const stageNum = Number(msg.stage);
+                const data = msg.data as Record<string, unknown>;
+                console.log('[WS] report_stage received, stageNum=', stageNum, 'data keys:', Object.keys(data));
+
+                if (stageNum >= 1 && stageNum <= 4) {
+                  setReportStages(prev => {
+                    const next = { ...prev };
+                    if      (stageNum === 1) next.stage1 = data as unknown as Stage1Data;
+                    else if (stageNum === 2) next.stage2 = data as unknown as Stage2Data;
+                    else if (stageNum === 3) next.stage3 = data as unknown as Stage3Data;
+                    else if (stageNum === 4) next.stage4 = data as unknown as Stage4Data;
+                    console.log('[WS] setReportStages → stages now:', Object.keys(next).filter(k => next[k as keyof ReportStages]));
+                    return next;
+                  });
+                } else {
+                  console.warn('[WS] report_stage with unexpected stageNum:', stageNum, msg);
+                }
+              }
+
+              // Pipeline fully complete — hydrate any missed stages from the done payload
+              if (msg.event === 'done' && msg.data) {
+                const result = msg.data as Record<string, unknown>;
+                const report = (result.report ?? {}) as Record<string, unknown>;
+                console.log('[WS] done — report keys:', Object.keys(report));
+
+                // Fill in any stages that didn't arrive via report_stage events
+                setReportStages(prev => {
+                  const s1 = prev.stage1 ?? (report.stage1 as Stage1Data | undefined);
+                  const s2 = prev.stage2 ?? (report.stage2 as Stage2Data | undefined);
+                  const s3 = prev.stage3 ?? (report.stage3 as Stage3Data | undefined);
+                  const s4 = prev.stage4 ?? (report.stage4 as Stage4Data | undefined);
+                  console.log('[WS] done hydration — stage1 present:', !!s1, 's2:', !!s2, 's3:', !!s3, 's4:', !!s4);
+                  return { stage1: s1, stage2: s2, stage3: s3, stage4: s4 };
+                });
+
+                apiDoneRef.current = true;
+                tryFinish();
+              }
+
+              if (msg.event === 'error') {
+                console.error('[WS] Analysis error:', msg.message);
+                apiDoneRef.current = true;
+                tryFinish();
+              }
+            } catch (handlerErr) {
+              console.error('[WS] onmessage handler threw:', handlerErr, 'msg was:', msg);
             }
           };
 

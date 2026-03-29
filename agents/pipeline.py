@@ -275,12 +275,10 @@ Format:
     )
 
 
-def run_report_remediation(remediation: dict, mitre: dict, stage1: dict) -> dict:
+def run_report_remediation(remediation: dict, mitre: dict) -> dict:
     """Stage 4 — Remediation: prioritized action plan, YARA rule, long-term steps. Target: <35s."""
     print("Running Report Stage 4: Remediation Plan...")
     ctx = {
-        "malware_family":    stage1.get("malware_family", ""),
-        "risk_score":        stage1.get("risk_score", 0),
         "containment_steps": remediation.get("containment_steps", []),
         "iocs_to_block":     remediation.get("iocs_to_block", []),
         "yara_rule":         remediation.get("yara_rule", ""),
@@ -356,11 +354,13 @@ def run_pipeline(file_metadata: dict, progress_cb=None, vt_data: dict | None = N
             if data is not None:
                 payload["data"] = data
             progress_cb(payload)
+            print(f"[pipeline→queue] event={event!r} status={status!r}")
 
     def emit_stage(stage_num: int, data: dict):
         if progress_cb:
             progress_cb({"event": "report_stage", "stage": stage_num,
                          "status": "complete", "data": data})
+            print(f"[pipeline→queue] event='report_stage' stage={stage_num}")
 
     print("Starting MalwareScope Pipeline...")
     print("=" * 50)
@@ -409,7 +409,7 @@ def run_pipeline(file_metadata: dict, progress_cb=None, vt_data: dict | None = N
     emit_stage(3, stage3)
 
     # Stage 4 — Remediation plan (~35 s)
-    stage4 = run_report_remediation(remediation, mitre, stage1)
+    stage4 = run_report_remediation(remediation, mitre)
     print(f"Report S4 complete — {len(stage4.get('action_plan', []))} action items")
     emit_stage(4, stage4)
 

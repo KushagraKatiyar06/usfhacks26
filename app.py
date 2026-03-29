@@ -126,6 +126,8 @@ def _run_job(job_id: str, filepath: str) -> None:
 
     def emit(event: dict) -> None:
         q.put(event)
+        print(f"[queue PUT] job={job_id[:8]} event={event.get('event')!r}"
+              f"{' stage=' + str(event.get('stage')) if 'stage' in event else ''}")
 
     try:
         # Stage 0 — static analysis (sandbox/analyze.py)
@@ -223,8 +225,11 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str) -> None:
                     {"event": "error", "message": "Analysis timed out (300 s)"})
                 break
 
+            ename = event.get("event")
+            print(f"[ws SEND]  job={job_id[:8]} event={ename!r}"
+                  f"{' stage=' + str(event.get('stage')) if 'stage' in event else ''}")
             await websocket.send_json(event)
-            if event.get("event") in ("done", "error"):
+            if ename in ("done", "error"):
                 break
 
     except WebSocketDisconnect:
