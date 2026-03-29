@@ -15,6 +15,8 @@ import ThreatReportPanel, {
   type Stage4Data,
 } from '@/components/ThreatReportPanel';
 import SandboxSimulation from '@/components/SandboxSimulation';
+import LinuxSandboxPanel from '@/components/LinuxSandboxPanel';
+import { type Finding } from '@/lib/data';
 
 const STAGE_DURATIONS = [800, 1500, 2500, 1000, 2000, 800];
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
@@ -77,6 +79,7 @@ export default function Dashboard() {
           return r.json();
         })
         .then(({ job_id }: { job_id: string }) => {
+          setJobId(job_id);
           const wsBase = API_URL.replace(/^https?/, s => (s === 'https' ? 'wss' : 'ws'));
           const ws = new WebSocket(`${wsBase}/ws/${job_id}`);
 
@@ -284,6 +287,7 @@ export default function Dashboard() {
         />
         <ThreatReportPanel stage1={reportStages.stage1} />
         <SandboxSimulation />
+        <LinuxSandboxPanel staticData={staticData} jobId={jobId} />
       </div>
     </>
   );
