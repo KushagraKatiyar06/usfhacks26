@@ -8,10 +8,16 @@ type FileState = 'normal' | 'infected' | 'encrypted';
 
 const PHASE_PCTS = [16, 14, 20, 20, 10, 20];
 
-export default function SandboxSimulation() {
+interface RealData {
+  fileOps?: { path: string; op: string }[];
+  network?: { url?: string; host?: string; method?: string }[];
+  shellCmds?: string[];
+  processes?: { name: string }[];
+}
+
+export default function SandboxSimulation({ realData }: { realData?: RealData | null }) {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [phase, setPhase] = useState(-1);
   const [phaseLabel, setPhaseLabel] = useState('IDLE');
   const [fileStates, setFileStates] = useState<Record<string, FileState>>({
     f1: 'normal', f2: 'normal', f3: 'normal', f4: 'normal',
@@ -36,6 +42,47 @@ export default function SandboxSimulation() {
   function addExfil(msg: string, color: string) {
     setExfilLog(prev => [...prev, { msg, color }]);
   }
+
+  // When real analysis data arrives, populate panels with actual malware behaviour
+  useEffect(() => {
+    if (!realData) return;
+
+    // File operations from dynamic JS analysis
+    if (realData.fileOps && realData.fileOps.length > 0) {
+      setFileOpLog([]);
+      realData.fileOps.slice(0, 8).forEach((op, i) => {
+        setTimeout(() => {
+          const color = op.op === 'write' || op.op === 'create' ? 'var(--magenta)' : op.op === 'delete' ? '#ff4466' : '#ffcc00';
+          setFileOpLog(prev => [...prev, { msg: `${op.op.toUpperCase()}: ${op.path}`, color }]);
+        }, i * 300);
+      });
+    }
+
+    // Shell commands → taskbar process
+    if (realData.shellCmds && realData.shellCmds.length > 0) {
+      setTaskbarProc(realData.shellCmds[0].slice(0, 40));
+    } else if (realData.processes && realData.processes.length > 0) {
+      setTaskbarProc(realData.processes[0].name);
+    }
+
+    // Network connections
+    if (realData.network && realData.network.length > 0) {
+      setExfilLog([{ msg: '⬤ LIVE CAPTURE — real connections observed', color: '#ff4466' }]);
+      realData.network.slice(0, 6).forEach((n, i) => {
+        setTimeout(() => {
+          const dst = n.host ?? n.url ?? 'unknown';
+          setExfilLog(prev => [...prev, {
+            msg: `→ ${n.method ?? 'CONNECT'}: ${dst}`,
+            color: '#ff2d9e',
+          }]);
+        }, i * 500 + 400);
+      });
+    }
+
+    // Animate progress bar to show analysis is complete
+    setPhaseLabel('ANALYSIS COMPLETE — LIVE DATA');
+    setProgress(100);
+  }, [realData]);
 
   const advanceProgress = useCallback((pct: number, next: () => void) => {
     const target = progressRef.current + pct;
@@ -124,7 +171,6 @@ export default function SandboxSimulation() {
     phaseRef.current = 0;
     setRunning(true);
     setProgress(0);
-    setPhase(0);
     setRansomVisible(false);
     setRansomBg('rgba(0,0,0,0)');
     setFileStates({ f1: 'normal', f2: 'normal', f3: 'normal', f4: 'normal', f5: 'normal', f6: 'normal', f7: 'normal' });
@@ -271,8 +317,8 @@ export default function SandboxSimulation() {
             </div>
           </div>
           <div className="section-divider" />
-          <div className="f9 text-dim">FILE OPERATIONS</div>
-          <div style={{ fontSize: 9, lineHeight: 1.7, marginTop: 4, height: 50, overflow: 'hidden' }}>
+          <div className="f9 text-dim">FILE OPERATIONS {realData?.fileOps?.length ? <span style={{ color: '#ff4466' }}>● LIVE</span> : null}</div>
+          <div style={{ fontSize: 9, lineHeight: 1.7, marginTop: 4, height: 80, overflowY: 'auto' }}>
             {fileOpLog.map((op, i) => (
               <div key={i} style={{ color: op.color }}>{op.msg}</div>
             ))}

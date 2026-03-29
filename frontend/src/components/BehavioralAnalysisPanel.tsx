@@ -57,14 +57,26 @@ export interface StaticResult {
   };
 }
 
+interface DynamicJs {
+  objects_created?: { type: string; name: string }[];
+  processes?: { name: string; pid?: number; type?: string }[];
+  shell_commands?: { cmd: string }[];
+  file_ops?: { path: string; op: string }[];
+  network?: { url?: string; host?: string; method?: string }[];
+  registry?: Record<string, string>[];
+  eval_chains?: { depth: number; snippet: string }[];
+  decode_ops?: { type: string; result?: string }[];
+}
+
 interface Props {
   currentStage: number;
   stageDone: boolean[];
   staticData?: StaticResult | null;
+  dynamicJs?: DynamicJs | null;
 }
 
-// Convert real static analysis into log entries
-function buildRealLogs(s: StaticResult): LogEntry[] {
+// Convert real static + dynamic analysis into log entries
+function buildRealLogs(s: StaticResult, dyn?: DynamicJs | null): LogEntry[] {
   const logs: LogEntry[] = [];
   let sec = 1;
 
@@ -92,22 +104,71 @@ function buildRealLogs(s: StaticResult): LogEntry[] {
   (s.dropped_files ?? []).forEach(f => logs.push({ sec: sec++, tag: 'crit', cat: 'FILE', msg: `DROP: ${f}` }));
   (s.registry_keys ?? []).forEach(r => logs.push({ sec: sec++, tag: 'warn', cat: 'REG', msg: `WRITE: ${r}` }));
 
+  // Dynamic JS: runtime COM objects created
+  (dyn?.objects_created ?? []).forEach(o => {
+    const name = o.name ?? o.type ?? 'unknown';
+    const isDanger = ['shell', 'adodb', 'wscript', 'xmlhttp'].some(k => name.toLowerCase().includes(k));
+    logs.push({ sec: sec++, tag: isDanger ? 'crit' : 'warn', cat: 'COM', msg: `CreateObject: ${name}` });
+  });
+
+  // Dynamic JS: shell commands executed
+  (dyn?.shell_commands ?? []).slice(0, 8).forEach(c => {
+    logs.push({ sec: sec++, tag: 'crit', cat: 'EXEC', msg: c.cmd.slice(0, 120) });
+  });
+
+  // Dynamic JS: file operations
+  (dyn?.file_ops ?? []).slice(0, 6).forEach(f => {
+    logs.push({ sec: sec++, tag: 'warn', cat: 'FILE', msg: `${f.op.toUpperCase()}: ${f.path}` });
+  });
+
+  // Dynamic JS: registry operations
+  (dyn?.registry ?? []).slice(0, 4).forEach((r: Record<string, string>) => {
+    logs.push({ sec: sec++, tag: 'crit', cat: 'REG', msg: `${r.op ?? 'WRITE'}: ${r.key ?? r.path ?? JSON.stringify(r)}` });
+  });
+
+  // Dynamic JS: network connections attempted
+  (dyn?.network ?? []).slice(0, 6).forEach(n => {
+    const dst = n.url ?? n.host ?? 'unknown';
+    logs.push({ sec: sec++, tag: 'crit', cat: 'NET', msg: `C2 CONNECT: ${dst}` });
+  });
+
   return logs;
 }
 
-// Convert suspicious imports / PE sections into process-tree entries
-function buildRealProcs(s: StaticResult): Process[] {
+// Convert suspicious imports / dynamic JS objects into process-tree entries
+function buildRealProcs(s: StaticResult, dyn?: DynamicJs | null): Process[] {
   const procs: Process[] = [];
-  const HIGH_IMPORTS = ['createremotethread', 'virtualalloc', 'writeprocessmemory', 'ntcreatethreadex',
-    'amsiscanbuffer', 'etweventwrite', 'shellex', 'winexec'];
+  const HIGH = ['createremotethread', 'virtualalloc', 'writeprocessmemory', 'shell', 'wscript', 'powershell', 'adodb'];
+  const root = s.file_name ?? 'sample';
 
+  // Prefer dynamic JS objects (real runtime data)
+  const jsObjs = dyn?.objects_created ?? [];
+  const jsProcs = dyn?.processes ?? [];
+
+  if (jsObjs.length > 0 || jsProcs.length > 0) {
+    // Root node — the script file itself
+    procs.push({ name: root, pid: 1000, parent: root, color: 'yellow' });
+    jsObjs.slice(0, 5).forEach((obj, i) => {
+      const low = (obj.name ?? obj.type ?? '').toLowerCase();
+      const isHigh = HIGH.some(h => low.includes(h));
+      procs.push({ name: obj.name ?? obj.type, pid: 1017 + i * 17, parent: root, color: isHigh ? 'red' : 'yellow' });
+    });
+    jsProcs.slice(0, 4).forEach((p, i) => {
+      const low = (p.name ?? '').toLowerCase();
+      const isHigh = HIGH.some(h => low.includes(h));
+      procs.push({ name: p.name, pid: p.pid ?? 2000 + i * 13, parent: root, color: isHigh ? 'red' : 'yellow' });
+    });
+    return procs;
+  }
+
+  // Fallback: PE suspicious imports
   (s.suspicious_imports ?? s.dangerous_functions ?? []).slice(0, 7).forEach((imp, i) => {
     const low = imp.toLowerCase();
-    const isHigh = HIGH_IMPORTS.some(h => low.includes(h));
+    const isHigh = HIGH.some(h => low.includes(h));
     procs.push({
       name: imp.split('!')[1] ?? imp,
       pid: 1000 + i * 17,
-      parent: imp.includes('!') ? imp.split('!')[0] : s.file_name ?? 'sample',
+      parent: imp.includes('!') ? imp.split('!')[0] : root,
       color: isHigh ? 'red' : 'yellow',
     });
   });
@@ -115,13 +176,20 @@ function buildRealProcs(s: StaticResult): Process[] {
   return procs;
 }
 
-// Convert IPs / URLs into connection entries
-function buildRealConns(s: StaticResult): Connection[] {
+// Convert IPs / URLs / dynamic network into connection entries
+function buildRealConns(s: StaticResult, dyn?: DynamicJs | null): Connection[] {
   const conns: Connection[] = [];
   let ts = 0;
-
   const fmt = (n: number) => `00:${String(n).padStart(2, '0')}`;
 
+  // Dynamic JS runtime network connections (highest priority — actually observed)
+  (dyn?.network ?? []).slice(0, 5).forEach(n => {
+    const dst = n.host ?? (n.url ?? '').replace(/https?:\/\//, '').split('/')[0] ?? 'unknown';
+    const port = (n.url ?? '').startsWith('https') ? 443 : 80;
+    conns.push({ ts: fmt(ts++), dir: 'OUT', dst, port, size: '?KB', type: `C2 ${n.method ?? 'CONNECT'}` });
+  });
+
+  // Static IOCs
   (s.ips_found ?? []).slice(0, 3).forEach(ip => {
     conns.push({ ts: fmt(ts++), dir: 'OUT', dst: ip, port: 443, size: '?KB', type: 'SUSPECT IP' });
   });
@@ -136,7 +204,7 @@ function buildRealConns(s: StaticResult): Connection[] {
   return conns;
 }
 
-export default function BehavioralAnalysisPanel({ currentStage, stageDone, staticData }: Props) {
+export default function BehavioralAnalysisPanel({ currentStage, stageDone, staticData, dynamicJs }: Props) {
   const [activeTab, setActiveTab] = useState('process');
   const [logs, setLogs] = useState<LogEntry[]>([
     { sec: 0, tag: 'info', cat: 'SYS', msg: 'ThreatNet AI v2.4.1 — sandbox initialized' },
@@ -161,9 +229,9 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone, stati
   useEffect(() => {
     if (!staticData) return;
 
-    const realLogs = buildRealLogs(staticData);
-    const realProcs = buildRealProcs(staticData);
-    const realConns = buildRealConns(staticData);
+    const realLogs = buildRealLogs(staticData, dynamicJs);
+    const realProcs = buildRealProcs(staticData, dynamicJs);
+    const realConns = buildRealConns(staticData, dynamicJs);
 
     // Stream logs with a short delay between each
     realLogs.forEach((entry, i) => {
@@ -173,7 +241,7 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone, stati
     setTimeout(() => setProcs(realProcs), 300);
     setTimeout(() => setConns(realConns), 600);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [staticData]);
+  }, [staticData, dynamicJs]);
 
   // Stage-driven demo logs (only when no real data yet)
   useEffect(() => {

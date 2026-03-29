@@ -150,32 +150,46 @@ Format:
 
 def run_pipeline(file_meta: dict, on_event=None) -> dict:
     """
-    Run all 5 agents in order. on_event(name, status, data) is called
-    after each agent completes so the caller can stream progress.
+    4-agent pipeline (ingestion is skipped — file_meta is already structured).
+    Round 1: static_analysis + mitre_mapping in parallel  (~8s)
+    Round 2: remediation                                   (~5s)
+    Round 3: report                                        (~8s)
+    Total: ~21s instead of ~35s
     """
 
     def emit(name: str, status: str, data: dict = None):
         if on_event:
             on_event(name, status, data or {})
 
-    emit("ingestion", "running")
-    ingestion = run_ingestion(file_meta)
+    # Ingestion: pass-through (no Claude call — saves one round)
+    ingestion = {
+        "file_name":         file_meta.get("file_name"),
+        "file_type":         file_meta.get("file_type"),
+        "file_size_kb":      file_meta.get("file_size_kb"),
+        "suspicious_flags":  file_meta.get("behaviors", [])[:6],
+        "is_obfuscated":     file_meta.get("is_obfuscated", False),
+        "threat_indicators": file_meta.get("yara_matches", []) + file_meta.get("mitre_techniques", [])[:4],
+        "confidence":        0.9,
+    }
     emit("ingestion", "done", ingestion)
 
+    # Round 1: static analysis + MITRE mapping in parallel
     emit("static_analysis", "running")
     emit("mitre_mapping",   "running")
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-        sf = ex.submit(run_static_analysis, ingestion)
-        mf = ex.submit(run_mitre_mapping,   ingestion)
+        sf = ex.submit(run_static_analysis, file_meta)
+        mf = ex.submit(run_mitre_mapping,   file_meta)
         static = sf.result()
         mitre  = mf.result()
     emit("static_analysis", "done", static)
     emit("mitre_mapping",   "done", mitre)
 
+    # Round 2: remediation
     emit("remediation", "running")
     remediation = run_remediation(static, mitre)
     emit("remediation", "done", remediation)
 
+    # Round 3: final report
     emit("report", "running")
     report = run_report(ingestion, static, mitre, remediation)
     emit("report", "done", report)

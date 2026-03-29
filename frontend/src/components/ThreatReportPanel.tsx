@@ -42,7 +42,7 @@ export default function ThreatReportPanel({ visible, data, pending }: Props) {
   }, [visible, riskScore]);
 
   return (
-    <Panel title="// AI THREAT REPORT" className="ai-panel" style={{ gridRow: 1 }}>
+    <Panel title="// AI THREAT REPORT" className="ai-panel" style={{ gridRow: 1, maxHeight: '82vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {!visible ? (
         <div className="f9 text-dim" style={{ textAlign: 'center', padding: '30px 0' }}>
           Awaiting analysis...<br /><span className="blink">_</span>
@@ -52,7 +52,7 @@ export default function ThreatReportPanel({ visible, data, pending }: Props) {
           Finalizing AI report...<br /><span className="blink">_</span>
         </div>
       ) : (
-        <>
+        <div style={{ overflowY: 'auto', flex: 1, paddingRight: 4 }}>
           <div className="f9 text-dim">CLASSIFICATION</div>
           <div className="malware-type-badge">{malwareType}</div>
 
@@ -104,7 +104,7 @@ export default function ThreatReportPanel({ visible, data, pending }: Props) {
           <div style={{ fontSize: 10, lineHeight: 1.65, marginTop: 6, color: '#7ab8cc', fontStyle: 'italic' }}>
             {reasoning}
           </div>
-        </>
+        </div>
       )}
     </Panel>
   );

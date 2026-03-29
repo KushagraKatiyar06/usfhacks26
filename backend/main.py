@@ -82,17 +82,25 @@ def build_image() -> bool:
         return False
 
 
-def run_static_in_docker(filepath: str) -> dict | None:
+def run_static_in_docker(filepath: str, filename: str = 'sample') -> dict | None:
     """Run analyze.py inside the sandbox container."""
+    # Preserve extension so detect_file_type works inside the container
+    ext = ''
+    for part in reversed(filename.lower().split('.')):
+        candidate = f'.{part}'
+        if candidate in ('.exe', '.dll', '.js', '.jse', '.ps1', '.vbs', '.bat', '.hta', '.msi', '.bin'):
+            ext = candidate
+            break
+    mount_name = f'sample{ext}' if ext else 'sample'
     try:
         r = subprocess.run([
             'docker', 'run', '--rm',
             '--network=none',
             '--memory=512m',
             '--cpus=1',
-            '-v', f'{filepath}:/analysis/sample',
+            '-v', f'{filepath}:/analysis/{mount_name}',
             SANDBOX_IMAGE,
-            '/analysis/sample',
+            f'/analysis/{mount_name}',
         ], capture_output=True, text=True, timeout=120)
 
         if r.returncode == 0 and r.stdout.strip():
@@ -155,91 +163,131 @@ def build_sandbox_image():
     return {"status": "built"}
 
 
+def _run_static(tmp_path: str, filename: str) -> dict:
+    """Run static + dynamic analysis, return (static_result, dynamic_js, dynamic_pe, file_meta)."""
+    use_docker = docker_available() and image_built()
+
+    static_result = None
+    if use_docker:
+        static_result = run_static_in_docker(tmp_path, filename)
+    if static_result is None and analyze_file is not None:
+        static_result = analyze_file(tmp_path)
+    if static_result is None:
+        raise HTTPException(status_code=500, detail="Static analysis unavailable")
+
+    dynamic_js = None
+    if use_docker:
+        dynamic_js = run_dynamic_in_docker(tmp_path, filename)
+
+    dynamic_pe = None
+    if ha_analyze and HA_API_KEY:
+        try:
+            dynamic_pe = ha_analyze(tmp_path, HA_API_KEY)
+        except Exception as e:
+            print(f"Hybrid Analysis error: {e}")
+
+    file_meta: dict = {
+        "file_name":           filename,
+        "file_size_kb":        os.path.getsize(tmp_path) // 1024,
+        "file_type":           static_result.get("file_type"),
+        "entropy":             static_result.get("entropy"),
+        "is_obfuscated":       static_result.get("is_obfuscated"),
+        "threat_level":        static_result.get("threat_level"),
+        "behaviors":           static_result.get("behaviors", []),
+        "mitre_techniques":    static_result.get("mitre_techniques", []),
+        "dangerous_functions": static_result.get("dangerous_functions", [])[:10],
+        "urls_found":          static_result.get("urls_found", [])[:5],
+        "ips_found":           static_result.get("ips_found", [])[:5],
+        "yara_matches":        static_result.get("yara_matches", []),
+        "dropped_files":       static_result.get("dropped_files", [])[:5],
+        "dotnet":              static_result.get("dotnet", {}),
+    }
+    if dynamic_js:
+        file_meta["js_objects_created"] = dynamic_js.get("objects_created", [])
+        file_meta["js_shell_commands"]  = [c["cmd"][:200] for c in dynamic_js.get("shell_commands", [])][:5]
+        file_meta["js_file_ops"]        = [f.get("path", "") for f in dynamic_js.get("file_ops", [])][:10]
+        file_meta["js_network"]         = dynamic_js.get("network", [])[:5]
+        file_meta["js_registry"]        = dynamic_js.get("registry", [])[:5]
+    if dynamic_pe:
+        file_meta["pe_verdict"]         = dynamic_pe.get("verdict")
+        file_meta["pe_threat_score"]    = dynamic_pe.get("threat_score")
+        file_meta["pe_malware_family"]  = dynamic_pe.get("malware_family")
+        file_meta["pe_processes"]       = [p["name"] for p in dynamic_pe.get("processes", [])][:10]
+        file_meta["pe_network"]         = dynamic_pe.get("network", [])[:5]
+        file_meta["pe_signatures"]      = [s["name"] for s in dynamic_pe.get("signatures", [])][:10]
+        file_meta["pe_mitre"]           = dynamic_pe.get("mitre", [])[:10]
+
+    return {"static": static_result, "dynamic_js": dynamic_js, "dynamic_pe": dynamic_pe, "file_meta": file_meta}
+
+
+# ── Step 1: fast static analysis (~5-10s) ─────────────────────────────────────
+
+@app.post("/analyze/static")
+async def analyze_static(file: UploadFile = File(...)):
+    """Returns static + dynamic analysis immediately. Frontend shows real data right away."""
+    suffix = f"_{file.filename}" if file.filename else ".bin"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = tmp.name
+    try:
+        result = _run_static(tmp_path, file.filename or "sample")
+        print(f"[static] done, behaviors={len(result['file_meta'].get('behaviors', []))}")
+        return result
+    except json.JSONDecodeError as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Parse error: {e}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+    finally:
+        os.unlink(tmp_path)
+
+
+# ── Step 2: Claude pipeline (~25-35s) ─────────────────────────────────────────
+
+@app.post("/analyze/pipeline")
+async def analyze_pipeline(body: dict):
+    """Accepts file_meta JSON from /analyze/static, runs 5-agent Claude pipeline."""
+    try:
+        file_meta = body.get("file_meta", body)
+        print(f"[pipeline] running on {file_meta.get('file_name')}...")
+        if not run_pipeline:
+            raise HTTPException(status_code=500, detail="AI pipeline unavailable")
+        pipeline_result = run_pipeline(file_meta)
+        ai_report = pipeline_result["report"]
+        agents = {k: pipeline_result[k] for k in ("ingestion", "static_analysis", "mitre_mapping", "remediation")}
+        print("[pipeline] done")
+        return {"report": ai_report, "agents": agents}
+    except json.JSONDecodeError as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"AI parse error: {e}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+
+# ── Legacy combined endpoint (kept for compatibility) ─────────────────────────
+
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)):
     suffix = f"_{file.filename}" if file.filename else ".bin"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
-
     try:
-        filename = file.filename or "sample"
-        use_docker = docker_available() and image_built()
-
-        # ── Static analysis ──────────────────────────────────────────────────
-        static_result = None
-        if use_docker:
-            static_result = run_static_in_docker(tmp_path)
-        if static_result is None and analyze_file is not None:
-            static_result = analyze_file(tmp_path)
-        if static_result is None:
-            raise HTTPException(status_code=500, detail="Static analysis unavailable")
-
-        # ── Docker: JS dynamic analysis ──────────────────────────────────────
-        dynamic_js = None
-        if use_docker:
-            dynamic_js = run_dynamic_in_docker(tmp_path, filename)
-
-        # ── Hybrid Analysis: .NET / PE dynamic execution ─────────────────────
-        dynamic_pe = None
-        if ha_analyze and HA_API_KEY:
-            try:
-                dynamic_pe = ha_analyze(tmp_path, HA_API_KEY)
-            except Exception as e:
-                print(f"Hybrid Analysis error: {e}")
-
-        # ── Build context for Claude ─────────────────────────────────────────
-        file_meta = {
-            "file_name":           filename,
-            "file_size_kb":        os.path.getsize(tmp_path) // 1024,
-            "file_type":           static_result.get("file_type"),
-            "entropy":             static_result.get("entropy"),
-            "is_obfuscated":       static_result.get("is_obfuscated"),
-            "threat_level":        static_result.get("threat_level"),
-            "behaviors":           static_result.get("behaviors", []),
-            "mitre_techniques":    static_result.get("mitre_techniques", []),
-            "dangerous_functions": static_result.get("dangerous_functions", [])[:10],
-            "urls_found":          static_result.get("urls_found", [])[:5],
-            "ips_found":           static_result.get("ips_found", [])[:5],
-            "yara_matches":        static_result.get("yara_matches", []),
-            "dropped_files":       static_result.get("dropped_files", [])[:5],
-            "dotnet":              static_result.get("dotnet", {}),
-        }
-        if dynamic_js:
-            file_meta["js_objects_created"] = dynamic_js.get("objects_created", [])
-            file_meta["js_shell_commands"]  = [c["cmd"][:200] for c in dynamic_js.get("shell_commands", [])][:5]
-            file_meta["js_file_ops"]        = [f.get("path", "") for f in dynamic_js.get("file_ops", [])][:10]
-            file_meta["js_network"]         = dynamic_js.get("network", [])[:5]
-            file_meta["js_registry"]        = dynamic_js.get("registry", [])[:5]
-        if dynamic_pe:
-            file_meta["pe_verdict"]         = dynamic_pe.get("verdict")
-            file_meta["pe_threat_score"]    = dynamic_pe.get("threat_score")
-            file_meta["pe_malware_family"]  = dynamic_pe.get("malware_family")
-            file_meta["pe_processes"]       = [p["name"] for p in dynamic_pe.get("processes", [])][:10]
-            file_meta["pe_network"]         = dynamic_pe.get("network", [])[:5]
-            file_meta["pe_signatures"]      = [s["name"] for s in dynamic_pe.get("signatures", [])][:10]
-            file_meta["pe_mitre"]           = dynamic_pe.get("mitre", [])[:10]
-
-        print(f"[analyze] static done, behaviors={len(file_meta.get('behaviors',[]))}, running pipeline...")
-        if run_pipeline:
-            pipeline_result = run_pipeline(file_meta)
-            ai_report = pipeline_result["report"]
-            agents = {k: pipeline_result[k] for k in ("ingestion", "static_analysis", "mitre_mapping", "remediation")}
-            print("[analyze] pipeline done")
-        else:
+        result = _run_static(tmp_path, file.filename or "sample")
+        if not run_pipeline:
             raise HTTPException(status_code=500, detail="AI pipeline unavailable")
-
-        return {
-            "static":     static_result,
-            "dynamic_js": dynamic_js,
-            "dynamic_pe": dynamic_pe,
-            "report":     ai_report,
-            "agents":     agents,
-        }
-
+        pipeline_result = run_pipeline(result["file_meta"])
+        return {**result, "report": pipeline_result["report"],
+                "agents": {k: pipeline_result[k] for k in ("ingestion", "static_analysis", "mitre_mapping", "remediation")}}
     except json.JSONDecodeError as e:
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"AI report parse error: {e}")
+        raise HTTPException(status_code=500, detail=f"AI parse error: {e}")
     except HTTPException:
         raise
     except Exception as e:

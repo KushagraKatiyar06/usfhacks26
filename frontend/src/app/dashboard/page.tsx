@@ -19,6 +19,7 @@ export default function Dashboard() {
   const [reportVisible, setReportVisible] = useState(false);
   const [reportData, setReportData] = useState<ReportData | null>(null);
   const [staticData, setStaticData] = useState<StaticResult | null>(null);
+  const [dynamicJsData, setDynamicJsData] = useState<Record<string, unknown> | null>(null);
   const [reportPending, setReportPending] = useState(false);
   const [autoAnalyze, setAutoAnalyze] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -41,6 +42,7 @@ export default function Dashboard() {
     setReportVisible(false);
     setReportData(null);
     setStaticData(null);
+    setDynamicJsData(null);
     setReportPending(false);
     setCurrentStage(-1);
     setStageDone(Array(6).fill(false));
@@ -50,16 +52,26 @@ export default function Dashboard() {
     if (fileInfo.file) {
       const formData = new FormData();
       formData.append('file', fileInfo.file);
-      fetch(`${API_URL}/analyze`, { method: 'POST', body: formData })
-        .then(r => {
-          if (!r.ok) throw new Error(`API error ${r.status}`);
-          return r.json();
-        })
-        .then((data: { static: StaticResult; dynamic_js?: unknown; dynamic_pe?: unknown; report: ReportData; agents?: unknown }) => {
+
+      // Step 1 — fast static analysis (~5-10s): show real behavioral data immediately
+      fetch(`${API_URL}/analyze/static`, { method: 'POST', body: formData })
+        .then(r => { if (!r.ok) throw new Error(`Static API error ${r.status}`); return r.json(); })
+        .then((data: { static: StaticResult; dynamic_js?: Record<string, unknown>; dynamic_pe?: unknown; file_meta: Record<string, unknown> }) => {
           setStaticData(data.static);
-          setReportData(data.report);
-          apiDoneRef.current = true;
-          tryShowReport();
+          setDynamicJsData(data.dynamic_js ?? null);  // real process data shows NOW
+
+          // Step 2 — Claude pipeline (~25-35s): runs in background, report fills in when ready
+          return fetch(`${API_URL}/analyze/pipeline`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_meta: data.file_meta }),
+          })
+            .then(r => { if (!r.ok) throw new Error(`Pipeline API error ${r.status}`); return r.json(); })
+            .then((pipeline: { report: ReportData; agents?: unknown }) => {
+              setReportData(pipeline.report);
+              apiDoneRef.current = true;
+              tryShowReport();
+            });
         })
         .catch(err => {
           console.error('Analysis API error:', err);
@@ -150,13 +162,14 @@ export default function Dashboard() {
           currentStage={currentStage}
           stageDone={stageDone}
           staticData={staticData}
+          dynamicJs={dynamicJsData as never}
         />
         <ThreatReportPanel
           visible={reportVisible}
           data={reportData}
           pending={reportPending}
         />
-        <SandboxSimulation />
+        <SandboxSimulation realData={dynamicJsData as never} />
       </div>
     </>
   );
