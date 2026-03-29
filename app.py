@@ -64,7 +64,7 @@ app = FastAPI(title="UseProtection API", docs_url="/api/docs")
 # CORS — allow the Next.js dev server (port 3000) during development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
