@@ -46,7 +46,7 @@ HA_HDRS   = {
 }
 
 # Default malware sample if none given
-DEFAULT_SAMPLE = TESTING_DIR / "6108674530.JS.malicious"
+DEFAULT_SAMPLE = TESTING_DIR / "samples" / "6108674530.JS.malicious"
 
 # Hybrid Analysis environment IDs
 # 110 = Windows 7 32-bit, 120 = Windows 7 64-bit, 300 = Linux (Ubuntu 16.04)

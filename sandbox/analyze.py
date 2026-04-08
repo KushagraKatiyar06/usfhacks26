@@ -29,12 +29,27 @@ SCRIPT_EXTENSIONS = {
     '.wsf': 'WSF',
 }
 
+_SAFETY_SUFFIXES = {
+    '.malicious', '.malware', '.mal', '.virus', '.vir', '.infected',
+    '.safe', '.sample', '.bad', '.disabled', '.quarantine', '.suspect',
+    '.bak', '.orig',
+}
+
+
+def _resolve_true_ext(filepath: str) -> str:
+    """Return the real extension, stripping any trailing safety-label suffixes."""
+    p = Path(filepath)
+    while p.suffix.lower() in _SAFETY_SUFFIXES:
+        p = Path(p.stem)
+    return p.suffix.lower()
+
+
 def detect_file_type(filepath: str) -> str:
     with open(filepath, 'rb') as f:
         magic = f.read(2)
     if magic == b'MZ':
         return 'PE'
-    ext = Path(filepath).suffix.lower()
+    ext = _resolve_true_ext(filepath)
     if ext in SCRIPT_EXTENSIONS:
         return SCRIPT_EXTENSIONS[ext]
     # Fall back: try reading as text and sniff keywords

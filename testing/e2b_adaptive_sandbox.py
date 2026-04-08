@@ -480,7 +480,7 @@ def adaptive_analyze(filename: str) -> nx.DiGraph:
 
     # Resume from saved patches if they exist — avoids regenerating known-good stubs.
     # If the patches already define catchAll, skip the base mock to avoid duplicate const.
-    patches_file = SCRIPT_DIR / "adaptive_patches.js"
+    patches_file = SCRIPT_DIR / "patches" / "adaptive_patches.js"
     if patches_file.exists():
         saved = patches_file.read_text(encoding="utf-8")
         if "catchAll" in saved:
@@ -599,7 +599,7 @@ def adaptive_analyze(filename: str) -> nx.DiGraph:
 # Shows exactly what the malware does with what we have, and the next crash
 # ---------------------------------------------------------------------------
 def dry_run(filename: str):
-    patches_file = SCRIPT_DIR / "adaptive_patches.js"
+    patches_file = SCRIPT_DIR / "patches" / "adaptive_patches.js"
     if not patches_file.exists():
         print("[DRY RUN] No adaptive_patches.js found. Run adaptive_analyze first.")
         return
@@ -641,7 +641,7 @@ def dry_run(filename: str):
 # ---------------------------------------------------------------------------
 # Payload encryption — Fernet symmetric encryption for sensitive output files
 # ---------------------------------------------------------------------------
-_PAYLOAD_KEY_FILE = SCRIPT_DIR / "payload_key.bin"
+_PAYLOAD_KEY_FILE = SCRIPT_DIR / "samples" / "payload_key.bin"
 
 
 def _encrypt_payload_outputs():
@@ -661,7 +661,7 @@ def _encrypt_payload_outputs():
 
     f = Fernet(key)
     targets = [
-        SCRIPT_DIR / "payload_decoded.ps1",
+        SCRIPT_DIR / "samples" / "payload_decoded.ps1",
         SCRIPT_DIR / "payload_agent_tesla.bin",
     ]
     encrypted_any = False
@@ -693,7 +693,7 @@ def _encrypt_payload_outputs():
 def extract_and_analyze_payload(filename: str, G: nx.DiGraph):
     import base64
 
-    patches_file = SCRIPT_DIR / "adaptive_patches.js"
+    patches_file = SCRIPT_DIR / "patches" / "adaptive_patches.js"
     if not patches_file.exists():
         print("[PAYLOAD] No patches found. Run adaptive_analyze first.")
         return
@@ -746,7 +746,7 @@ def extract_and_analyze_payload(filename: str, G: nx.DiGraph):
     print(f"[PAYLOAD] Captured command ({len(payload_cmd)} chars)")
 
     # Always save the raw command for debugging
-    raw_path = SCRIPT_DIR / "payload_cmd_raw.txt"
+    raw_path = SCRIPT_DIR / "samples" / "payload_cmd_raw.txt"
     raw_path.write_text(payload_cmd, encoding="utf-8", errors="replace")
     print(f"[PAYLOAD] Raw command saved to payload_cmd_raw.txt")
 
@@ -833,7 +833,7 @@ def extract_and_analyze_payload(filename: str, G: nx.DiGraph):
         print("[PAYLOAD] All decode strategies failed — using raw command for analysis.")
         ps_script = payload_cmd
     else:
-        ps_path = SCRIPT_DIR / "payload_decoded.ps1"
+        ps_path = SCRIPT_DIR / "samples" / "payload_decoded.ps1"
         ps_path.write_text(ps_script, encoding="utf-8", errors="replace")
         preview = ps_script.replace('\x00', '').strip()[:300]
         print(f"[PAYLOAD] Decoded PowerShell ({len(ps_script)} chars). Preview:\n{preview}\n")
@@ -966,7 +966,7 @@ def visualize(G: nx.DiGraph):
 
     plt.title("Adaptive Behavioral Map — Agent Tesla dropper", fontsize=14, fontweight="bold")
     plt.tight_layout()
-    plt.savefig(SCRIPT_DIR / "behavior_graph.png", dpi=150, bbox_inches="tight")
+    plt.savefig(SCRIPT_DIR / "results" / "behavior_graph.png", dpi=150, bbox_inches="tight")
     print("[VIZ] Graph saved to behavior_graph.png")
     plt.show()
 
@@ -1203,7 +1203,7 @@ def hybrid_analysis_enrich(filename: str, G: nx.DiGraph):
 MODE = "payload"
 
 if __name__ == "__main__":
-    TARGET = "6108674530.JS.malicious"
+    TARGET = "samples/6108674530.JS.malicious"
     if MODE == "dryrun":
         dry_run(TARGET)
     elif MODE == "payload":

@@ -1,22 +1,25 @@
-google-adk>=0.1.0
+# AI / Agent frameworks
 anthropic>=0.25.0
+google-adk>=0.1.0
+google-generativeai
+google-genai
+
+# Web framework
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+
+# Environment & config
 python-dotenv>=1.0.0
-jsbeautifier
 
-# Backend
-fastapi>=0.100.0
-uvicorn[standard]>=0.20.0
-python-multipart>=0.0.6
-
-
-
-e2b_code_interpreter
-python-dotenv
+# Analysis & visualization
+jsbeautifier>=1.14.0
 networkx
 matplotlib
 scipy
-google-generativeai
-google-genai
 cryptography
 requests
-jspdf
+
+# Sandbox execution
+e2b>=2.0.0
+e2b_code_interpreter

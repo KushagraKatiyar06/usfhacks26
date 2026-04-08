@@ -57,23 +57,6 @@ export default function Home() {
         }}>
           Use<span style={{ color: '#3b82f6' }}>Protection</span>
         </div>
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '11px', color: '#475569' }}>{clock}</span>
-          <Link href="/dashboard" style={{
-            fontFamily: 'Orbitron, monospace',
-            fontSize: '9px',
-            letterSpacing: '2px',
-            textTransform: 'uppercase',
-            color: '#3b82f6',
-            border: '1px solid rgba(59,130,246,0.4)',
-            borderRadius: '6px',
-            padding: '8px 18px',
-            textDecoration: 'none',
-            transition: 'all 0.2s',
-          }}>
-            Sign In
-          </Link>
-        </div>
       </nav>
 
       {/* Hero */}
@@ -180,54 +163,8 @@ export default function Home() {
           }}>
             Get Started
           </Link>
-          <Link href="/dashboard" style={{
-            fontFamily: 'Orbitron, monospace',
-            fontSize: '10px',
-            letterSpacing: '2px',
-            textTransform: 'uppercase',
-            color: '#94a3b8',
-            background: 'transparent',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: '8px',
-            padding: '14px 32px',
-            textDecoration: 'none',
-          }}>
-            View Demo
-          </Link>
         </div>
 
-        {/* Stats row */}
-        <div style={{
-          display: 'flex',
-          gap: '48px',
-          marginTop: '80px',
-          flexWrap: 'wrap',
-          justifyContent: 'center',
-        }}>
-          {[
-            { val: '99.7%', label: 'Detection Rate' },
-            { val: '<30s', label: 'Analysis Time' },
-            { val: '200+', label: 'MITRE Techniques' },
-          ].map(({ val, label }) => (
-            <div key={label} style={{ textAlign: 'center' }}>
-              <div style={{
-                fontFamily: 'Orbitron, monospace',
-                fontSize: '28px',
-                fontWeight: 700,
-                color: '#ffffff',
-                textShadow: '0 0 20px rgba(59,130,246,0.4)',
-              }}>{val}</div>
-              <div style={{
-                fontFamily: 'JetBrains Mono, monospace',
-                fontSize: '10px',
-                letterSpacing: '2px',
-                textTransform: 'uppercase',
-                color: '#475569',
-                marginTop: '6px',
-              }}>{label}</div>
-            </div>
-          ))}
-        </div>
       </main>
 
       {/* Footer */}

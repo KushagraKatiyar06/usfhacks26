@@ -12,7 +12,7 @@ BASE = "https://www.hybrid-analysis.com/api/v2"
 hdrs = {"api-key": api_key, "User-Agent": "Falcon Sandbox", "Accept": "application/json"}
 
 # Compute REAL sha256 from the actual file
-file_path = Path(__file__).parent / "6108674530.JS.malicious"
+file_path = Path(__file__).parent / "samples" / "6108674530.JS.malicious"
 if not file_path.exists():
     print(f"ERROR: {file_path} not found")
     exit(1)

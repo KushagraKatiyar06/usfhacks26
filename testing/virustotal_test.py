@@ -1,9 +1,13 @@
 import requests
 import time
 import json
+from pathlib import Path
 
 API_KEY = "027e8033160ecda2bc6eced4d39f254783a1640e88c0eba112ea3ad661a3db0b"
-FILE_PATH = "6108674530.JS.malicious"
+_SCRIPT_DIR = Path(__file__).parent
+FILE_PATH = _SCRIPT_DIR / "samples" / "6108674530.JS.malicious"
+_RESULTS_DIR = _SCRIPT_DIR / "results"
+_RESULTS_DIR.mkdir(exist_ok=True)
 
 headers = {"x-apikey": API_KEY}
 
@@ -47,13 +51,13 @@ for attempt in range(5): # Try 5 times to get behavior
         behavior_json = behavior_response.json()
         
         # Save to file for your AI Agent
-        with open("malware_behavior.json", "w") as f:
+        with open(_RESULTS_DIR / "malware_behavior.json", "w") as f:
             json.dump(behavior_json, f, indent=4)
-            
-        print("Success! JSON saved to 'malware_behavior.json'.")
+
+        print("Success! JSON saved to 'results/malware_behavior.json'.")
         break
     else:
         print(f"Behavior logs not ready yet (Attempt {attempt+1}/5). Waiting 60s...")
         time.sleep(60)
 
-print("Done. You can now upload 'malware_behavior.json' to your AI.")
+print("Done. You can now upload 'results/malware_behavior.json' to your AI.")
