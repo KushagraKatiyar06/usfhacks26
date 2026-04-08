@@ -14,7 +14,7 @@ export interface AgentState {
 }
 
 export type AgentStatuses = Record<
-  'ingestion' | 'static_analysis' | 'mitre_mapping' | 'remediation' | 'report',
+  'ingestion' | 'static_analysis' | 'mitre_mapping' | 'remediation' | 'report' | 'virustotal',
   AgentState
 >;
 
@@ -140,8 +140,18 @@ function JoinLines() {
 
 function AgentsTab({ agentStatuses }: { agentStatuses: AgentStatuses }) {
   const a = agentStatuses;
+  const vtSkipped = a.virustotal.status === 'idle' && a.virustotal.detail === 'skipped';
   return (
     <div style={{ padding: '8px 4px 4px' }}>
+      {/* VirusTotal enrichment (shown above ingestion) */}
+      <AgentNode
+        label="VIRUSTOTAL"
+        status={vtSkipped ? 'idle' : a.virustotal.status}
+        detail={vtSkipped ? 'not configured' : a.virustotal.detail}
+        compact
+      />
+      <Pipe />
+
       {/* Ingestion */}
       <AgentNode label="INGESTION AGENT" status={a.ingestion.status} detail={a.ingestion.detail} />
       <ForkLines />

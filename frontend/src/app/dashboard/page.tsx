@@ -16,7 +16,6 @@ import ThreatReportPanel, {
 } from '@/components/ThreatReportPanel';
 
 import dynamic from 'next/dynamic';
-const SandboxSimulation = dynamic(() => import('@/components/SandboxSimulation'), { ssr: false });
 const LinuxSandboxPanel = dynamic(() => import('@/components/LinuxSandboxPanel'), { ssr: false });
 
 const STAGE_DURATIONS = [800, 1500, 2500, 1000, 2000, 800];
@@ -29,10 +28,11 @@ const INITIAL_AGENT_STATUSES: AgentStatuses = {
   mitre_mapping:   { status: 'idle', detail: '' },
   remediation:     { status: 'idle', detail: '' },
   report:          { status: 'idle', detail: '' },
+  virustotal:      { status: 'idle', detail: '' },
 };
 
 // Events that map directly to AgentStatuses keys
-const AGENT_KEYS = new Set(['ingestion', 'static_analysis', 'mitre_mapping', 'remediation', 'report']);
+const AGENT_KEYS = new Set(['ingestion', 'static_analysis', 'mitre_mapping', 'remediation', 'report', 'virustotal']);
 
 export default function Dashboard() {
   const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
@@ -76,14 +76,18 @@ export default function Dashboard() {
     if (fileInfo.file) {
       const formData = new FormData();
       formData.append('file', fileInfo.file);
+      if (fileInfo.mode) formData.append('mode', fileInfo.mode);
 
       fetch(`${API_URL}/upload`, { method: 'POST', body: formData })
         .then(r => {
           if (!r.ok) throw new Error(`Upload error ${r.status}`);
           return r.json();
         })
-        .then(({ job_id }: { job_id: string }) => {
+        .then(({ job_id, mode }: { job_id: string; mode: string }) => {
           setJobId(job_id);
+          if (mode === 'vt_log') {
+            pushLog('[✓] VT behavior log detected — skipping static analysis');
+          }
           const wsBase = API_URL.replace(/^https?/, s => (s === 'https' ? 'wss' : 'ws'));
           const ws = new WebSocket(`${wsBase}/ws/${job_id}`);
 
@@ -132,13 +136,18 @@ export default function Dashboard() {
                 pushLog(`[►] ${(msg.message as string) ?? 'AI pipeline starting...'}`);
               }
 
-              // Agent running/complete events (ingestion, static_analysis agent, mitre_mapping, remediation, report)
+              // Agent running/complete/skipped/error events
               if (AGENT_KEYS.has(event) && status === 'running') {
+                const detail = event === 'virustotal' ? ((msg.message as string) ?? '') : '';
                 setAgentStatuses(prev => ({
                   ...prev,
-                  [event]: { status: 'running' as AgentStatus, detail: '' },
+                  [event]: { status: 'running' as AgentStatus, detail },
                 }));
-                pushLog(`[►] ${event.toUpperCase().replace('_', ' ')} agent starting...`);
+                if (event === 'virustotal') {
+                  pushLog(`[►] VIRUSTOTAL: ${(msg.message as string) ?? 'querying...'}`);
+                } else {
+                  pushLog(`[►] ${event.toUpperCase().replace('_', ' ')} agent starting...`);
+                }
               }
 
               if (AGENT_KEYS.has(event) && status === 'complete') {
@@ -147,7 +156,20 @@ export default function Dashboard() {
                   ...prev,
                   [event]: { status: 'complete' as AgentStatus, detail },
                 }));
-                pushLog(`[✓] ${event.toUpperCase().replace('_', ' ')} agent complete`);
+                if (event === 'virustotal') {
+                  pushLog(`[✓] VIRUSTOTAL: ${detail}`);
+                } else {
+                  pushLog(`[✓] ${event.toUpperCase().replace('_', ' ')} agent complete`);
+                }
+              }
+
+              if (AGENT_KEYS.has(event) && (status === 'skipped' || status === 'error')) {
+                const detail = (msg.message as string) ?? '';
+                setAgentStatuses(prev => ({
+                  ...prev,
+                  [event]: { status: 'idle' as AgentStatus, detail: 'skipped' },
+                }));
+                pushLog(`[WARN] VIRUSTOTAL: ${detail}`);
               }
 
               // Streaming report stages
@@ -290,7 +312,6 @@ export default function Dashboard() {
           terminalLogs={terminalLogs}
         />
         <ThreatReportPanel stage1={reportStages.stage1} />
-        <SandboxSimulation />
         <LinuxSandboxPanel staticData={staticData} jobId={jobId} />
       </div>
     </>

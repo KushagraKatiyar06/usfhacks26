@@ -185,5 +185,5 @@ def visualize_results(G):
     plt.show()
 
 # --- EXECUTION ---
-behavior_graph = analyze_malware_with_graph("6108674530.JS.malicious")
+behavior_graph = analyze_malware_with_graph("samples/6108674530.JS.malicious")
 visualize_results(behavior_graph)
