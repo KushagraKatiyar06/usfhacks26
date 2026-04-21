@@ -120,10 +120,11 @@ function GraphView({ gnodes }: GraphViewProps) {
   }
 
   function onMouseMove(e: React.MouseEvent) {
-    if (!dragRef.current) return;
-    const dx = e.clientX - dragRef.current.startX;
-    const dy = e.clientY - dragRef.current.startY;
-    setTransform(t => ({ ...t, x: dragRef.current!.tx + dx, y: dragRef.current!.ty + dy }));
+    const drag = dragRef.current;
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    setTransform(t => ({ ...t, x: drag.tx + dx, y: drag.ty + dy }));
   }
 
   function onMouseUp() { dragRef.current = null; }
@@ -303,10 +304,11 @@ const TAG_COLOR: Record<string, string> = {
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 export default function LinuxSandboxPanel({ staticData, jobId }: Props) {
-  const [running, setRunning]   = useState(false);
-  const [done, setDone]         = useState(false);
-  const [logs, setLogs]         = useState<Array<{ line: string; tag: string }>>([]);
-  const [gnodes, setGnodes]     = useState<GNode[]>([]);
+  const [running, setRunning]       = useState(false);
+  const [done, setDone]             = useState(false);
+  const [logs, setLogs]             = useState<Array<{ line: string; tag: string }>>([]);
+  const [gnodes, setGnodes]         = useState<GNode[]>([]);
+  const [savedPatchFile, setSavedPatchFile] = useState<string | null>(null);
 
   // jobId from a direct sandbox-only upload (no analysis)
   const [localJobId, setLocalJobId]   = useState<string | null>(null);
@@ -411,7 +413,10 @@ export default function LinuxSandboxPanel({ staticData, jobId }: Props) {
         if (msg.event === 'sandbox_done' || msg.event === 'sandbox_error') {
           if (msg.event === 'sandbox_done') {
             const pf = msg.patch_file as string | null;
-            if (pf) addLogNode(`[SYSTEM] Patches saved → testing/patches/${pf}`, 'info', cx, cy);
+            if (pf) {
+              addLogNode(`[SYSTEM] Patches saved → testing/patches/${pf}`, 'info', cx, cy);
+              setSavedPatchFile(pf);
+            }
           }
           setRunning(false);
           setDone(msg.event === 'sandbox_done');
@@ -448,6 +453,7 @@ export default function LinuxSandboxPanel({ staticData, jobId }: Props) {
     setDone(false);
     setLogs([]);
     setGnodes([]);
+    setSavedPatchFile(null);
     typeIdxRef.current = {};
 
     const displayName = staticData?.file_name ?? localFileName ?? 'malware.js';
@@ -579,6 +585,25 @@ export default function LinuxSandboxPanel({ staticData, jobId }: Props) {
             <span style={{ fontSize: 9, color: '#10b981', fontFamily: 'JetBrains Mono, monospace', letterSpacing: 1 }}>
               ● COMPLETE
             </span>
+          )}
+          {savedPatchFile && (
+            <a
+              href={`${API_URL}/sandbox/patches/${encodeURIComponent(savedPatchFile)}`}
+              download={savedPatchFile}
+              style={{
+                fontFamily: 'Orbitron, monospace', fontSize: 9, letterSpacing: 1,
+                padding: '4px 10px',
+                background: 'rgba(16,185,129,0.1)',
+                border: '1px solid rgba(16,185,129,0.35)',
+                color: '#10b981',
+                borderRadius: 4, cursor: 'pointer',
+                textTransform: 'uppercase',
+                textDecoration: 'none',
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+              }}
+            >
+              ↓ SAVE PATCH
+            </a>
           )}
           <span style={{ fontSize: 9, color: '#475569', fontFamily: 'JetBrains Mono, monospace' }}>
             {nodeCount} node{nodeCount !== 1 ? 's' : ''}

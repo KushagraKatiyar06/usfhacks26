@@ -1,17 +1,11 @@
-.env
-__pycache__/
-*.pyc
-*.pyo
-.venv/
-venv/
-*.egg-info/
-dist/
-build/
-.DS_Store
-# Environment
+# Environment — never commit secrets
 .env
 testing/.env
+agents/.env
 *.env
+# but DO commit example/template files:
+!*.env.example
+!.env.local.example
 
 # Python
 venv/
@@ -24,6 +18,20 @@ __pycache__/
 dist/
 build/
 .eggs/
+
+# Sandbox generated patches (can be large, machine-specific)
+testing/patches/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.DS_Store
 
 # Malware samples
 *.malicious

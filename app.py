@@ -67,7 +67,7 @@ _ask_gemini_for_patch = None
 _run_once = None
 _TAG_RULES: list = []
 _BASE_MOCK = "console.log('[SYSTEM] Bare sandbox started.');\n"
-_MAX_ITER = 50
+_MAX_ITER = 5
 _STUCK_THRESH = 3
 _RUN_TIMEOUT = 45
 
@@ -256,11 +256,18 @@ _OUT = Path(__file__).parent / "frontend" / "out"
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="UseProtection API", docs_url="/api/docs")
 
-# CORS — allow the Next.js dev server (port 3000) during development
+# CORS — origins from env var (comma-separated) so production can lock to the
+# Cloudflare Pages domain without a code change.
+# Local default: "*" (open). Railway: set ALLOWED_ORIGINS=https://your-app.pages.dev
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
+_ALLOWED_ORIGINS: list[str] = (
+    ["*"] if _raw_origins.strip() == "*"
+    else [o.strip() for o in _raw_origins.split(",") if o.strip()]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_credentials=False,   # no auth cookies — wildcard-safe
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -432,8 +439,7 @@ def _run_job(
         emit({"event": "error", "status": "error", "message": str(exc)})
 
     finally:
-        # Keep file around so /sandbox/start/{job_id} can use it.
-        _sandbox_files[job_id] = filepath
+        pass  # file already registered in _sandbox_files at upload time
 
 
 # ── Sandbox helpers ───────────────────────────────────────────────────────────
@@ -564,14 +570,6 @@ def _run_sandbox_job(sandbox_job_id: str, filepath: str, main_job_id: str) -> No
     except Exception as exc:
         log(f"[ADAPTIVE] Fatal sandbox error: {exc}", "crit")
 
-    finally:
-        # Clean up the kept file
-        _sandbox_files.pop(main_job_id, None)
-        try:
-            os.unlink(filepath)
-        except OSError:
-            pass
-
     log(
         f"[SYSTEM] ── simulation complete — {len(patches_applied)} patches"
         + (f" → {patches_path.name}" if patches_applied else "") + " ──",
@@ -585,6 +583,12 @@ def _run_sandbox_job(sandbox_job_id: str, filepath: str, main_job_id: str) -> No
 
 
 # ── API routes ────────────────────────────────────────────────────────────────
+@app.get("/health")
+async def health():
+    """Railway health check."""
+    return {"status": "ok"}
+
+
 @app.post("/upload")
 async def upload_file(
     file: UploadFile,
@@ -620,6 +624,9 @@ async def upload_file(
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(content)
         tmp_path = tmp.name
+
+    # Register the file immediately so sandbox endpoints work without waiting for analysis.
+    _sandbox_files[job_id] = tmp_path
 
     _jobs[job_id] = queue.Queue()
     threading.Thread(
@@ -736,13 +743,6 @@ def _run_patch_job(sandbox_job_id: str, filepath: str, patch_content: str, main_
     except Exception as exc:
         log(f"[ERROR] Sandbox error: {exc}", "crit")
 
-    finally:
-        _sandbox_files.pop(main_job_id, None)
-        try:
-            os.unlink(filepath)
-        except OSError:
-            pass
-
     emit({"event": "sandbox_done", "iterations": 1, "patch_file": None})
 
 
@@ -813,6 +813,18 @@ async def sandbox_websocket(websocket: WebSocket, sandbox_job_id: str) -> None:
         pass
     finally:
         _sandbox_jobs.pop(sandbox_job_id, None)
+
+
+@app.get("/sandbox/patches/{filename}")
+async def download_patch(filename: str):
+    """Download a Gemini-generated patch file from testing/patches/."""
+    from fastapi import HTTPException
+    # Prevent path traversal
+    safe_name = Path(filename).name
+    patch_path = Path(__file__).parent / "testing" / "patches" / safe_name
+    if not patch_path.exists():
+        raise HTTPException(status_code=404, detail="Patch file not found")
+    return FileResponse(str(patch_path), filename=safe_name, media_type="application/javascript")
 
 
 # ── Sample malware library ────────────────────────────────────────────────────

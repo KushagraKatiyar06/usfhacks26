@@ -29,7 +29,7 @@ from e2b_code_interpreter import Sandbox
 SCRIPT_DIR = Path(__file__).parent.absolute()
 load_dotenv(dotenv_path=SCRIPT_DIR / ".env")
 
-MAX_ITERATIONS  = 50   # safety cap — loop stops earlier on clean exit or stuck
+MAX_ITERATIONS  = 5    # max Gemini patch iterations per run
 STUCK_THRESHOLD = 3    # stop if the same error repeats this many times in a row
 RUN_TIMEOUT     = 45   # seconds per sandbox run
 
