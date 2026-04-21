@@ -1,0 +1,5 @@
+name = "useprotech-tion"
+compatibility_date = "2025-04-21"
+
+# Serve the Next.js static export as Worker Assets
+assets = { directory = "./frontend/out" }
